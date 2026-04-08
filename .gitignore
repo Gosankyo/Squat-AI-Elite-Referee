@@ -1,0 +1,7 @@
+__pycache__/
+.streamlit/
+temp.mp4
+temp_analisis.mp4
+*.npy
+# yolov8n-pose.pt
+# modelo_squat_yolo.h5
