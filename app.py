@@ -8,7 +8,6 @@ import pandas as pd
 # --- 1. CONFIGURACIÓN ---
 st.set_page_config(page_title="SQUAT AI ULTRA ELITE", layout="wide", page_icon="🚀")
 
-# CSS Estilo "Cyber-Gym" (Neón y Oscuro)
 st.markdown("""
     <style>
     .main { background-color: #0b0e14; color: #e0e0e0; }
@@ -28,43 +27,30 @@ def iniciar_modelos():
 
 model_ia, yolo_pose = iniciar_modelos()
 
-# --- 3. FUNCIONES DE ANÁLISIS AVANZADO ---
+# --- 3. FUNCIONES DE ANÁLISIS ---
 
 def realizar_diagnostico_completo(secuencia_kp):
-    """Diagnóstico de 10: Torso, Valgo y Simetría"""
     f_fondo = secuencia_kp[len(secuencia_kp)//2] 
-    
-    # 1. Ángulo Torso
     dx_t = f_fondo[11*3] - f_fondo[5*3]
     dy_t = f_fondo[11*3+1] - f_fondo[5*3+1]
     angulo_torso = abs(np.degrees(np.arctan2(dx_t, dy_t)))
-    
-    # 2. Detección de Valgo (Rodillas hacia adentro)
-    # Hips (11,12) vs Knees (13,14)
     ancho_caderas = abs(f_fondo[11*3] - f_fondo[12*3])
     ancho_rodillas = abs(f_fondo[13*3] - f_fondo[14*3])
-    
-    # 3. Simetría de Cadera (¿Baja un lado más que otro?)
     desequilibrio_cadera = abs(f_fondo[11*3+1] - f_fondo[12*3+1])
     
     errores, soluciones = [], []
-    
     if angulo_torso > 45:
         errores.append("⚠️ **Torso Inclinado:** Exceso de carga lumbar.")
         soluciones.append("Sentadilla Frontal / Pausa en el hoyo.")
-    
     if ancho_rodillas < (ancho_caderas * 0.9):
         errores.append("⚠️ **Valgo de Rodilla:** Tus rodillas colapsan hacia adentro.")
         soluciones.append("Sentadilla con banda elástica (clamshells).")
-        
     if desequilibrio_cadera > 15:
         errores.append("⚠️ **Hip Shift:** Tu cadera se desplaza lateralmente.")
         soluciones.append("Sentadilla Búlgara para corregir asimetría.")
-        
     if not errores:
         errores.append("⭐ **Técnica de Élite:** Sin fallos críticos detectados.")
         soluciones.append("Sigue progresando en cargas.")
-        
     return errores, soluciones, angulo_torso
 
 def analizar_proporciones(puntos_kp):
@@ -77,7 +63,7 @@ def analizar_proporciones(puntos_kp):
     elif ratio < 0.78: return "FÉMURES CORTOS", "Barra Alta", ratio
     return "ESTRUCTURA NEUTRA", "Barra Media", ratio
 
-# --- 4. INTERFAZ Y SIDEBAR ---
+# --- 4. INTERFAZ ---
 st.sidebar.title("🚀 SQUAT AI CONTROL")
 lift_weight = st.sidebar.number_input("Peso en barra (kg)", value=100.0, step=2.5)
 user_weight = st.sidebar.number_input("Peso Corporal (kg)", value=75.0, step=0.5)
@@ -87,15 +73,16 @@ mapa_paises = {"España": "all-spain", "Francia": "all-france", "USA": "all-usa"
 
 tab1, tab2, tab3, tab4 = st.tabs(["🎥 ANÁLISIS VBT", "📐 ARQUITECTO", "📊 RANKING", "🕹️ JUEGO"])
 
-# --- TAB 1: JUEZ + VBT + DIAGNÓSTICO ---
+# --- TAB 1: JUEZ + VBT ---
 with tab1:
     c_left, c_right = st.columns([2, 1])
-    
     with c_right:
         reps_st = st.metric("REPSET", "0")
         luces = st.empty()
         st.subheader("📈 Velocidad (VBT)")
         grafico_v = st.empty()
+        st.subheader("📸 Captura de Profundidad")
+        deep_cap_area = st.empty()
         st.subheader("📝 Diagnóstico")
         diag_area = st.empty()
 
@@ -108,7 +95,9 @@ with tab1:
         # Variables de control
         secuencia, contador, estado, mejor_conf, y_ini, frames_bloqueo = [], 0, "ESPERANDO", 0, None, 0
         velocidades, y_prev = [], None
-        
+        frame_profundo = None
+        y_max_hoyo = -1.0 
+
         while cap.isOpened():
             ret, frame = cap.read()
             if not ret: break
@@ -119,44 +108,64 @@ with tab1:
                 det = res[0].keypoints.data.cpu().numpy()
                 boxes = res[0].boxes.data.cpu().numpy()
                 atleta_kp = det[np.argmin([abs((b[0]+b[2])/2 - 400) for b in boxes])]
+                
+                # Posición para VBT (Hombros) y Profundidad (Caderas)
                 h_y = (atleta_kp[5][1] + atleta_kp[6][1]) / 2
+                cadera_y = (atleta_kp[11][1] + atleta_kp[12][1]) / 2
                 
                 if y_ini is None: y_ini = h_y; y_prev = h_y; continue
                 
-                # Cálculo de velocidad instantánea
+                # VBT
                 v_inst = abs(h_y - y_prev)
                 velocidades.append(v_inst)
                 y_prev = h_y
                 
+                # LSTM Datos
                 kp_f = atleta_kp.flatten()
                 if len(kp_f) == 51: secuencia.append(kp_f)
                 if len(secuencia) > 30: secuencia.pop(0)
                 
+                # LÓGICA DEEP CAPTURE (Durante la bajada)
+                if estado == "BAJANDO":
+                    if cadera_y > y_max_hoyo:
+                        y_max_hoyo = cadera_y
+                        frame_profundo = res[0].plot()
+
+                # ESTADOS
                 if frames_bloqueo > 0: frames_bloqueo -= 1
                 else:
                     dist = h_y - y_ini
-                    if dist > 60 and estado == "ESPERANDO": estado = "BAJANDO"
+                    if dist > 60 and estado == "ESPERANDO": 
+                        estado = "BAJANDO"
+                        y_max_hoyo = -1.0 # Reiniciar para nueva rep
+                    
                     if estado == "BAJANDO" and len(secuencia) == 30:
                         pred = model_ia.predict(np.expand_dims(secuencia, axis=0), verbose=0)[0]
                         if pred[1] > mejor_conf: mejor_conf = pred[1]
+                    
                     if dist < 35 and estado == "BAJANDO":
                         if mejor_conf > 0.75:
                             contador += 1; frames_bloqueo = 90
                             luces.success("⚪ ⚪ ⚪ VÁLIDA")
+                            # Diagnóstico
                             fallos, sols, ang_t = realizar_diagnostico_completo(secuencia)
                             with diag_area.container():
                                 st.write(f"Ángulo Torso: {round(ang_t,1)}°")
                                 for f in fallos: st.error(f)
                                 for s in sols: st.success(f"📌 {s}")
-                        else: luces.error("🔴 🔴 🔴 NULA")
+                            # Mostrar Captura Profunda
+                            if frame_profundo is not None:
+                                deep_cap_area.image(frame_profundo, caption="Punto más bajo detectado", use_container_width=True)
+                        else: 
+                            luces.error("🔴 🔴 🔴 NULA")
                         estado = "ESPERANDO"
                 
                 reps_st.metric("REPSET", contador)
-                grafico_v.line_chart(velocidades[-50:]) # Mostrar últimos 50 frames
+                grafico_v.line_chart(velocidades[-50:])
             st_frame.image(res[0].plot(), channels="BGR")
         cap.release()
 
-# --- TAB 2: ARQUITECTO ---
+# --- TAB 2, 3, 4 (Resto igual) ---
 with tab2:
     st.header("📐 Sastre Biomecánico")
     foto = st.file_uploader("Foto de frente completa", type=['jpg', 'png'])
@@ -170,9 +179,7 @@ with tab2:
             with c2:
                 st.metric("Ratio Fémur/Torso", round(ratio,2))
                 st.success(f"**Estructura:** {tipo}\n\n**Técnica recomendada:** {rec}")
-                st.info("Esta recomendación optimiza el centro de gravedad sobre el mediopié.")
 
-# --- TAB 3: RANKINGS ---
 with tab3:
     st.header("📊 Nivel Competitivo")
     reps_cal = st.number_input("Reps para 1RM", min_value=1, value=1)
@@ -181,16 +188,12 @@ with tab3:
     url = f"https://www.openpowerlifting.org/rankings/{int(user_weight)}/{mapa_paises[pais]}/{sexo}/by-squat"
     st.markdown(f"### [🔗 Ir a OpenPowerlifting Rank]({url})")
 
-# --- TAB 4: MINIJUEGO ---
 with tab4:
     st.header("🕹️ Juez Simulator")
-    st.write("Mejora tu criterio de juez visualizando la base de datos de entrenamiento.")
     st.progress(100)
-    st.write("Entrenamiento del modelo LSTM completado con un 94% de precisión.")
+    st.write("Entrenamiento del modelo LSTM completado.")
 
-# Tabla Maestra al final
 st.divider()
-st.subheader("📋 Guía Maestra de Corrección Técnica")
 st.table([
     {"Fallo": "Valgo Rodilla", "Causa": "Glúteo medio débil", "Ejercicio": "Banded Squats / Monster Walk"},
     {"Fallo": "Hip Shift", "Causa": "Asimetría de movilidad", "Ejercicio": "Sentadilla Búlgara / Cossack Squat"},
