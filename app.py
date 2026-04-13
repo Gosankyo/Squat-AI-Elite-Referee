@@ -22,7 +22,7 @@ st.markdown("""
 # --- 2. CARGA DE MODELOS ---
 @st.cache_resource
 def iniciar_modelos():
-    # Seguimos usando el Cerebro Biomecánico Perfecto
+    # Cerebro Biomecánico (Visión y Redes Neuronales)
     model_ia = load_model('modelo_squat_biomecanico.h5')
     yolo_pose = YOLO('yolov8n-pose.pt')
     return model_ia, yolo_pose
@@ -87,7 +87,9 @@ mapa_paises = {"España": "all-spain", "Francia": "all-france", "USA": "all-usa"
 
 tab1, tab2, tab3, tab4 = st.tabs(["🎥 ANÁLISIS VBT", "📐 ARQUITECTO", "📊 RANKING", "🕹️ JUEGO"])
 
+# ==========================================
 # --- TAB 1: JUEZ + VBT + COACH NLP ---
+# ==========================================
 with tab1:
     c_left, c_right = st.columns([2, 1])
     with c_right:
@@ -127,16 +129,12 @@ with tab1:
         while cap.isOpened():
             ret, frame = cap.read()
             if not ret: break
-            # --- LA SOLUCIÓN AL ESTIRAMIENTO ---
-            h, w = frame.shape[:2] # Obtenemos el alto y ancho original
+            
+            # --- ARREGLO DE PROPORCIÓN (ASPECT RATIO) ---
+            h_orig, w_orig = frame.shape[:2]
             nuevo_ancho = 800
-            nuevo_alto = int(h * (nuevo_ancho / w)) # Calculamos el alto proporcional
-            
+            nuevo_alto = int(h_orig * (nuevo_ancho / w_orig))
             frame_res = cv2.resize(frame, (nuevo_ancho, nuevo_alto))
-            # -----------------------------------
-            
-            # YOLO detecta el esqueleto visualmente
-            res = yolo_pose.predict(frame_res, conf=0.5, verbose=False)
             
             # YOLO detecta el esqueleto visualmente
             res = yolo_pose.predict(frame_res, conf=0.5, verbose=False)
@@ -144,7 +142,7 @@ with tab1:
             if res[0].keypoints and len(res[0].keypoints.data) > 0:
                 det = res[0].keypoints.data.cpu().numpy()
                 boxes = res[0].boxes.data.cpu().numpy()
-                atleta_kp = det[np.argmin([abs((b[0]+b[2])/2 - 400) for b in boxes])]
+                atleta_kp = det[np.argmin([abs((b[0]+b[2])/2 - (nuevo_ancho/2)) for b in boxes])]
                 
                 # Coordenadas clave
                 h_y = (atleta_kp[5][1] + atleta_kp[6][1]) / 2
@@ -171,7 +169,7 @@ with tab1:
                     
                     secuencia.append(kp_norm)
                 
-                # Mantenemos solo los últimos 30 frames
+                # Mantenemos solo los últimos 30 frames para la IA
                 if len(secuencia) > 30: 
                     secuencia.pop(0)
                 
@@ -204,7 +202,7 @@ with tab1:
                         contador += 1
                         frames_bloqueo = 60
                         
-                        # Guardamos confianza
+                        # Guardamos datos para el prompt
                         ultima_confianza = mejor_conf
                         
                         if mejor_conf > 0.50:
@@ -214,7 +212,7 @@ with tab1:
                             ultimo_veredicto = "NULA"
                             luces.error(f"🔴 🔴 🔴 NULA (Confianza: {round((1-mejor_conf)*100)}%)")
                             
-                        # Diagnóstico
+                        # Diagnóstico Biomecánico
                         fallos, sols, ang_t = realizar_diagnostico_completo(kp_hoyo)
                         ultimos_fallos = fallos
                         ultimo_ang_torso = ang_t
@@ -236,10 +234,10 @@ with tab1:
 
         # --- SECCIÓN NLP (OLLAMA COACH) ---
         with coach_area.container():
-            if st.button("🎙️ Pedir Feedback al Entrenador", type="primary"):
+            if st.button("🎙️ Pedir Feedback al Entrenador", type="primary", use_container_width=True):
                 with st.spinner("El entrenador virtual está escribiendo su reporte..."):
                     
-                    # Limpiamos los caracteres especiales para el LLM
+                    # Limpiamos caracteres para el LLM
                     fallos_limpios = [f.replace("⚠️", "").replace("⭐", "").replace("**", "").strip() for f in ultimos_fallos]
                     
                     prompt_entrenador = f"""
@@ -256,29 +254,68 @@ with tab1:
                     """
                     
                     try:
-                        # Llamada local a Ollama (Llama 3.2)
                         respuesta = ollama.chat(model='llama3.2', messages=[
                             {'role': 'user', 'content': prompt_entrenador}
                         ])
                         st.info(f"**Coach Virtual:**\n\n {respuesta['message']['content']}")
                     except Exception as e:
-                        st.error(f"Error al conectar con Ollama. ¿Está la app abierta en tu PC? Detalle: {e}")
+                        st.error("Error al conectar con Ollama. ¿Está la app abierta en tu PC?")
 
-# --- TAB 2, 3, 4 ---
+# ==========================================
+# --- TAB 2: ARQUITECTO BIOMECÁNICO + NLP ---
+# ==========================================
 with tab2:
     st.header("📐 Sastre Biomecánico")
     foto = st.file_uploader("Foto de frente completa", type=['jpg', 'png'])
     if foto:
         img = cv2.imdecode(np.frombuffer(foto.read(), np.uint8), 1)
-        res_p = yolo_pose.predict(img, conf=0.5, verbose=False)
+        
+        # Ajuste de proporción opcional también para fotos
+        h_f, w_f = img.shape[:2]
+        w_f_new = 800
+        h_f_new = int(h_f * (w_f_new / w_f))
+        img_res = cv2.resize(img, (w_f_new, h_f_new))
+        
+        res_p = yolo_pose.predict(img_res, conf=0.5, verbose=False)
+        
         if res_p[0].keypoints:
             tipo, rec, ratio = analizar_proporciones(res_p[0].keypoints.data[0].cpu().numpy())
+            
             c1, c2 = st.columns(2)
             c1.image(res_p[0].plot(), use_container_width=True)
+            
             with c2:
-                st.metric("Ratio Fémur/Torso", round(ratio,2))
-                st.success(f"**Estructura:** {tipo}\n\n**Técnica recomendada:** {rec}")
+                st.metric("Ratio Fémur/Torso", round(ratio, 2))
+                st.success(f"**Estructura Base:** {tipo}\n\n**Técnica recomendada:** {rec}")
+                
+                # --- INTEGRACIÓN DE OLLAMA ---
+                st.markdown("---")
+                if st.button("🤖 Generar Informe de Anatomía (NLP)", type="primary"):
+                    with st.spinner("El experto biomecánico está redactando el informe..."):
+                        
+                        prompt_arquitecto = f"""
+                        Actúa como un analista biomecánico experto en Powerlifting. 
+                        Acabas de medir la estructura ósea de un atleta a través de visión artificial y tienes estos datos:
+                        - Ratio Fémur/Torso: {round(ratio, 2)}
+                        - Tipo de estructura: {tipo}
+                        - Variante de sentadilla recomendada: {rec}
+                        
+                        Escribe un breve informe técnico y directo (máximo 2 párrafos) dirigiéndote al atleta de 'tú'. 
+                        Explícale de forma sencilla qué significa tener esa estructura anatómica, por qué le beneficia la variante recomendada, y dale un pequeño consejo para sacarle partido a su palanca.
+                        NUNCA menciones que eres una IA o un modelo de lenguaje.
+                        """
+                        
+                        try:
+                            respuesta_arq = ollama.chat(model='llama3.2', messages=[
+                                {'role': 'user', 'content': prompt_arquitecto}
+                            ])
+                            st.info(f"**Informe del Analista:**\n\n {respuesta_arq['message']['content']}")
+                        except Exception as e:
+                            st.error("Error al conectar con Ollama. Asegúrate de tenerlo abierto.")
 
+# ==========================================
+# --- TAB 3 y TAB 4 (Sin cambios) ---
+# ==========================================
 with tab3:
     st.header("📊 Nivel Competitivo")
     reps_cal = st.number_input("Reps para 1RM", min_value=1, value=1)
@@ -290,9 +327,9 @@ with tab3:
 with tab4:
     st.header("🕹️ Estado del Sistema")
     st.progress(100)
-    st.success("✅ Motor Biomecánico Operativo")
-    st.success("✅ Coach Virtual (Ollama / NLP) Conectado")
-
+    st.success("✅ Motor Biomecánico Operativo (YOLOv8 + LSTM)")
+    st.success("✅ Módulo NLP Generativo Activo (Ollama Llama 3.2 Local)")
+    
 st.divider()
 st.table([
     {"Fallo": "Valgo Rodilla", "Causa": "Glúteo medio débil", "Ejercicio": "Banded Squats / Monster Walk"},
