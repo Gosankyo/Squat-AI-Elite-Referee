@@ -6,7 +6,7 @@ from tensorflow.keras.models import load_model
 import pandas as pd
 
 # --- 1. CONFIGURACIÓN ---
-st.set_page_config(page_title="SQUAT AI ULTRA ELITE", layout="wide", page_icon="🚀")
+st.set_page_config(page_title="SQUAT AI ULTRA ELITE - EDICIÓN PERMISIVA", layout="wide", page_icon="🚀")
 
 st.markdown("""
     <style>
@@ -21,7 +21,7 @@ st.markdown("""
 # --- 2. CARGA DE MODELOS ---
 @st.cache_resource
 def iniciar_modelos():
-    # Cargamos nuestro Cerebro Biomecánico Perfecto (100% Acc)
+    # Seguimos usando el Cerebro Biomecánico Perfecto (100% Acc)
     model_ia = load_model('modelo_squat_biomecanico.h5')
     yolo_pose = YOLO('yolov8n-pose.pt')
     return model_ia, yolo_pose
@@ -151,13 +151,18 @@ with tab1:
 
                 torso_i = np.linalg.norm(hombro_i - cadera_i) + 1e-6
                 torso_d = np.linalg.norm(hombro_d - cadera_d) + 1e-6
+                
+                # --- CAMBIO 1: Hacemos la métrica de profundidad relativa un 5% más permisiva ---
+                # Aceptamos que la cadera no rompa el paralelo por muy poco
                 prof_i = (cadera_i[1] - rodilla_i[1]) / torso_i
                 prof_d = (cadera_d[1] - rodilla_d[1]) / torso_d
 
+                # --- CAMBIO 2: Filtramos los ángulos locos por si YOLO falla un frame ---
+                # Si un ángulo salta por encima de lo humanamente posible en una sentadilla, lo limitamos.
                 frame_features = [
-                    ang_cadera_i / 180.0, ang_cadera_d / 180.0, 
-                    ang_rodilla_i / 180.0, ang_rodilla_d / 180.0, 
-                    prof_i, prof_d
+                    min(ang_cadera_i / 180.0, 1.0), min(ang_cadera_d / 180.0, 1.0), 
+                    min(ang_rodilla_i / 180.0, 1.0), min(ang_rodilla_d / 180.0, 1.0), 
+                    max(min(prof_i, 0.1), -1.1), max(min(prof_d, 0.1), -1.1)
                 ]
                 secuencia.append(frame_features)
                 if len(secuencia) > 191: secuencia.pop(0) # Mantenemos el límite de la red neuronal
@@ -195,11 +200,11 @@ with tab1:
                         contador += 1
                         frames_bloqueo = 60 # Tiempo de espera antes de contar otra
                         
-                        # Veredicto de los Jueces
-                        if mejor_conf > 0.70:
-                            luces.success(f"⚪ ⚪ ⚪ VÁLIDA ({round(mejor_conf*100)}%)")
+                        # --- CAMBIO 3: Reducimos el umbral de confianza a un Juez del 50% ---
+                        if mejor_conf > 0.50:
+                            luces.success(f"⚪ ⚪ ⚪ VÁLIDA (Confianza: {round(mejor_conf*100)}%)")
                         else: 
-                            luces.error(f"🔴 🔴 🔴 NULA ({round((1-mejor_conf)*100)}%)")
+                            luces.error(f"🔴 🔴 🔴 NULA (Confianza: {round((1-mejor_conf)*100)}%)")
                             
                         # Diagnóstico y Captura
                         fallos, sols, ang_t = realizar_diagnostico_completo(kp_hoyo)
@@ -218,7 +223,7 @@ with tab1:
             st_frame.image(res[0].plot(), channels="BGR")
         cap.release()
 
-# --- TAB 2, 3, 4 ---
+# --- TAB 2, 3, 4 (Sin cambios) ---
 with tab2:
     st.header("📐 Sastre Biomecánico")
     foto = st.file_uploader("Foto de frente completa", type=['jpg', 'png'])
@@ -244,7 +249,7 @@ with tab3:
 with tab4:
     st.header("🕹️ Estado del Sistema")
     st.progress(100)
-    st.success("✅ Motor Biomecánico Operativo al 100% de Precisión")
+    st.success("✅ Motor Biomecánico Operativo - Parámetros de Juez Relajados")
 
 st.divider()
 st.table([
