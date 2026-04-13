@@ -4,9 +4,10 @@ from ultralytics import YOLO
 import numpy as np
 from tensorflow.keras.models import load_model
 import pandas as pd
+import ollama
 
 # --- 1. CONFIGURACIÓN ---
-st.set_page_config(page_title="SQUAT AI ULTRA ELITE - EDICIÓN PERMISIVA", layout="wide", page_icon="🚀")
+st.set_page_config(page_title="SQUAT AI ULTRA ELITE - EDICIÓN NLP", layout="wide", page_icon="🚀")
 
 st.markdown("""
     <style>
@@ -21,7 +22,7 @@ st.markdown("""
 # --- 2. CARGA DE MODELOS ---
 @st.cache_resource
 def iniciar_modelos():
-    # Seguimos usando el Cerebro Biomecánico Perfecto (100% Acc)
+    # Seguimos usando el Cerebro Biomecánico Perfecto
     model_ia = load_model('modelo_squat_biomecanico.h5')
     yolo_pose = YOLO('yolov8n-pose.pt')
     return model_ia, yolo_pose
@@ -29,7 +30,6 @@ def iniciar_modelos():
 model_ia, yolo_pose = iniciar_modelos()
 
 # --- 3. FUNCIONES DE ANÁLISIS BIOMECÁNICO ---
-
 def calculate_angle(a, b, c):
     """Motor trigonométrico para calcular ángulos articulares"""
     a, b, c = np.array(a), np.array(b), np.array(c)
@@ -87,7 +87,7 @@ mapa_paises = {"España": "all-spain", "Francia": "all-france", "USA": "all-usa"
 
 tab1, tab2, tab3, tab4 = st.tabs(["🎥 ANÁLISIS VBT", "📐 ARQUITECTO", "📊 RANKING", "🕹️ JUEGO"])
 
-# --- TAB 1: JUEZ + VBT ---
+# --- TAB 1: JUEZ + VBT + COACH NLP ---
 with tab1:
     c_left, c_right = st.columns([2, 1])
     with c_right:
@@ -99,6 +99,10 @@ with tab1:
         deep_cap_area = st.empty()
         st.subheader("📝 Diagnóstico de IA")
         diag_area = st.empty()
+        
+        # Área para el Coach Virtual
+        st.subheader("💬 Entrenador Virtual (NLP)")
+        coach_area = st.empty()
 
     video = st.file_uploader("Sube vídeo de sentadilla", type=['mp4', 'mov'])
     if video:
@@ -113,6 +117,12 @@ with tab1:
         velocidades, y_prev = [], None
         frame_profundo, kp_hoyo = None, None
         y_max_hoyo = -1.0 
+        
+        # Variables para Ollama
+        ultimo_veredicto = "Desconocido"
+        ultimos_fallos = []
+        ultima_confianza = 0.0
+        ultimo_ang_torso = 0.0
 
         while cap.isOpened():
             ret, frame = cap.read()
@@ -138,83 +148,75 @@ with tab1:
                 velocidades.append(v_inst)
                 y_prev = h_y
                 
-                # 2. MOTOR BIOMECÁNICO (Traducción a 6 ángulos en vivo)
-                hombro_i, hombro_d = atleta_kp[5][:2], atleta_kp[6][:2]
-                cadera_i, cadera_d = atleta_kp[11][:2], atleta_kp[12][:2]
-                rodilla_i, rodilla_d = atleta_kp[13][:2], atleta_kp[14][:2]
-                tobillo_i, tobillo_d = atleta_kp[15][:2], atleta_kp[16][:2]
-
-                ang_cadera_i = calculate_angle(hombro_i, cadera_i, rodilla_i)
-                ang_cadera_d = calculate_angle(hombro_d, cadera_d, rodilla_d)
-                ang_rodilla_i = calculate_angle(cadera_i, rodilla_i, tobillo_i)
-                ang_rodilla_d = calculate_angle(cadera_d, rodilla_d, tobillo_d)
-
-                torso_i = np.linalg.norm(hombro_i - cadera_i) + 1e-6
-                torso_d = np.linalg.norm(hombro_d - cadera_d) + 1e-6
+                # 2. EXTRACCIÓN DE PUNTOS PARA EL MODELO LSTM (51 Puntos Normalizados)
+                kp_crudo = res[0].keypoints.data[0].cpu().numpy().flatten()
                 
-                # --- CAMBIO 1: Hacemos la métrica de profundidad relativa un 5% más permisiva ---
-                # Aceptamos que la cadera no rompa el paralelo por muy poco
-                prof_i = (cadera_i[1] - rodilla_i[1]) / torso_i
-                prof_d = (cadera_d[1] - rodilla_d[1]) / torso_d
-
-                # --- CAMBIO 2: Filtramos los ángulos locos por si YOLO falla un frame ---
-                # Si un ángulo salta por encima de lo humanamente posible en una sentadilla, lo limitamos.
-                frame_features = [
-                    min(ang_cadera_i / 180.0, 1.0), min(ang_cadera_d / 180.0, 1.0), 
-                    min(ang_rodilla_i / 180.0, 1.0), min(ang_rodilla_d / 180.0, 1.0), 
-                    max(min(prof_i, 0.1), -1.1), max(min(prof_d, 0.1), -1.1)
-                ]
-                secuencia.append(frame_features)
-                if len(secuencia) > 191: secuencia.pop(0) # Mantenemos el límite de la red neuronal
+                if len(kp_crudo) == 51:
+                    hip_l = kp_crudo[11*3 : 11*3+3]
+                    hip_r = kp_crudo[12*3 : 12*3+3]
+                    centro_cadera = (hip_l + hip_r) / 2
+                    
+                    kp_norm = kp_crudo.copy()
+                    for i in range(17):
+                        kp_norm[i*3 : i*3+3] -= centro_cadera
+                    
+                    secuencia.append(kp_norm)
+                
+                # Mantenemos solo los últimos 30 frames
+                if len(secuencia) > 30: 
+                    secuencia.pop(0)
                 
                 # 3. MÁQUINA DE ESTADOS Y PREDICCIÓN
                 if frames_bloqueo > 0: frames_bloqueo -= 1
                 else:
                     dist = h_y - y_ini
-                    # Detecta que empieza la sentadilla
                     if dist > 60 and estado == "ESPERANDO": 
                         estado = "BAJANDO"
                         y_max_hoyo = -1.0 
                         mejor_conf = 0.0
                         kp_hoyo = None
                     
-                    # Analiza en tiempo real mientras baja
                     if estado == "BAJANDO":
-                        # Deep Capture: Guarda el punto más bajo real
                         if cadera_y > y_max_hoyo:
                             y_max_hoyo = cadera_y
                             frame_profundo = res[0].plot()
-                            kp_hoyo = atleta_kp # Guardamos el esqueleto del hoyo para el diagnóstico
+                            kp_hoyo = atleta_kp 
                             
-                        # Predicción continua rellenando a 191 frames
+                        # Predicción continua con LSTM
                         seq_array = np.array(secuencia)
-                        pad_len = 191 - len(seq_array)
+                        pad_len = 30 - len(seq_array)
                         if pad_len > 0:
                             seq_array = np.pad(seq_array, ((0, pad_len), (0, 0)), 'constant')
                         
                         pred = model_ia.predict(np.expand_dims(seq_array, axis=0), verbose=0)[0]
-                        if pred[0] > mejor_conf: mejor_conf = pred[0] # pred[0] es la clase VÁLIDA
+                        if pred[0] > mejor_conf: mejor_conf = pred[0] # pred[0] es VÁLIDA
                     
-                    # Termina la repetición
                     if dist < 35 and estado == "BAJANDO":
                         contador += 1
-                        frames_bloqueo = 60 # Tiempo de espera antes de contar otra
+                        frames_bloqueo = 60
                         
-                        # --- CAMBIO 3: Reducimos el umbral de confianza a un Juez del 50% ---
+                        # Guardamos confianza
+                        ultima_confianza = mejor_conf
+                        
                         if mejor_conf > 0.50:
+                            ultimo_veredicto = "VÁLIDA"
                             luces.success(f"⚪ ⚪ ⚪ VÁLIDA (Confianza: {round(mejor_conf*100)}%)")
                         else: 
+                            ultimo_veredicto = "NULA"
                             luces.error(f"🔴 🔴 🔴 NULA (Confianza: {round((1-mejor_conf)*100)}%)")
                             
-                        # Diagnóstico y Captura
+                        # Diagnóstico
                         fallos, sols, ang_t = realizar_diagnostico_completo(kp_hoyo)
+                        ultimos_fallos = fallos
+                        ultimo_ang_torso = ang_t
+                        
                         with diag_area.container():
                             st.write(f"**Ángulo Torso Máximo:** {round(ang_t,1)}°")
                             for f in fallos: st.error(f)
                             for s in sols: st.success(f"📌 {s}")
                             
                         if frame_profundo is not None:
-                            deep_cap_area.image(frame_profundo, caption="📸 Punto crítico analizado", use_container_width=True)
+                            deep_cap_area.image(frame_profundo, caption="📸 Punto crítico", use_container_width=True)
                             
                         estado = "ESPERANDO"
                 
@@ -223,7 +225,37 @@ with tab1:
             st_frame.image(res[0].plot(), channels="BGR")
         cap.release()
 
-# --- TAB 2, 3, 4 (Sin cambios) ---
+        # --- SECCIÓN NLP (OLLAMA COACH) ---
+        with coach_area.container():
+            if st.button("🎙️ Pedir Feedback al Entrenador", type="primary"):
+                with st.spinner("El entrenador virtual está escribiendo su reporte..."):
+                    
+                    # Limpiamos los caracteres especiales para el LLM
+                    fallos_limpios = [f.replace("⚠️", "").replace("⭐", "").replace("**", "").strip() for f in ultimos_fallos]
+                    
+                    prompt_entrenador = f"""
+                    Actúa como un entrenador de Powerlifting de élite. 
+                    El sistema biomecánico acaba de analizar a tu atleta con estos datos:
+                    - Veredicto: Sentadilla {ultimo_veredicto}
+                    - Confianza de la IA: {round(ultima_confianza*100, 1)}%
+                    - Ángulo máximo del torso en el hoyo: {round(ultimo_ang_torso, 1)} grados
+                    - Fallos detectados: {', '.join(fallos_limpios)}
+                    
+                    Redacta un feedback técnico, directo y muy motivador en un máximo de 2 párrafos cortos. 
+                    Háblale de 'tú' al atleta. Si la sentadilla fue válida, felicítale. Si fue nula, dale un consejo biomecánico.
+                    IMPORTANTE: NUNCA menciones que eres una IA, un modelo de lenguaje o que te han pasado un prompt.
+                    """
+                    
+                    try:
+                        # Llamada local a Ollama (Llama 3.2)
+                        respuesta = ollama.chat(model='llama3.2', messages=[
+                            {'role': 'user', 'content': prompt_entrenador}
+                        ])
+                        st.info(f"**Coach Virtual:**\n\n {respuesta['message']['content']}")
+                    except Exception as e:
+                        st.error(f"Error al conectar con Ollama. ¿Está la app abierta en tu PC? Detalle: {e}")
+
+# --- TAB 2, 3, 4 ---
 with tab2:
     st.header("📐 Sastre Biomecánico")
     foto = st.file_uploader("Foto de frente completa", type=['jpg', 'png'])
@@ -249,7 +281,8 @@ with tab3:
 with tab4:
     st.header("🕹️ Estado del Sistema")
     st.progress(100)
-    st.success("✅ Motor Biomecánico Operativo - Parámetros de Juez Relajados")
+    st.success("✅ Motor Biomecánico Operativo")
+    st.success("✅ Coach Virtual (Ollama / NLP) Conectado")
 
 st.divider()
 st.table([
