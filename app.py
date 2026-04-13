@@ -127,7 +127,16 @@ with tab1:
         while cap.isOpened():
             ret, frame = cap.read()
             if not ret: break
-            frame_res = cv2.resize(frame, (800, 600))
+            # --- LA SOLUCIÓN AL ESTIRAMIENTO ---
+            h, w = frame.shape[:2] # Obtenemos el alto y ancho original
+            nuevo_ancho = 800
+            nuevo_alto = int(h * (nuevo_ancho / w)) # Calculamos el alto proporcional
+            
+            frame_res = cv2.resize(frame, (nuevo_ancho, nuevo_alto))
+            # -----------------------------------
+            
+            # YOLO detecta el esqueleto visualmente
+            res = yolo_pose.predict(frame_res, conf=0.5, verbose=False)
             
             # YOLO detecta el esqueleto visualmente
             res = yolo_pose.predict(frame_res, conf=0.5, verbose=False)
