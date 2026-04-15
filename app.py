@@ -85,24 +85,23 @@ sexo = st.sidebar.selectbox("Sexo", ["men", "women"])
 pais = st.sidebar.selectbox("Región", ["España", "Francia", "USA", "All"])
 mapa_paises = {"España": "all-spain", "Francia": "all-france", "USA": "all-usa", "All": "all"}
 
-tab1, tab2, tab3, tab4 = st.tabs(["🎥 ANÁLISIS VBT", "📐 ARQUITECTO", "📊 RANKING", "🕹️ JUEGO"])
+tab1, tab2, tab3, tab4 = st.tabs(["🎥 JUEZ BIOMECÁNICO", "📐 ARQUITECTO", "📊 RANKING", "🕹️ ESTADO"])
 
 # ==========================================
-# --- TAB 1: JUEZ + VBT + COACH NLP ---
+# --- TAB 1: JUEZ + COACH NLP ---
 # ==========================================
 with tab1:
     c_left, c_right = st.columns([2, 1])
     with c_right:
         reps_st = st.metric("REPSET", "0")
         luces = st.empty()
-        st.subheader("📈 Velocidad (VBT)")
-        grafico_v = st.empty()
+        
         st.subheader("📸 Deep Capture")
         deep_cap_area = st.empty()
+        
         st.subheader("📝 Diagnóstico de IA")
         diag_area = st.empty()
         
-        # Área para el Coach Virtual
         st.subheader("💬 Entrenador Virtual (NLP)")
         coach_area = st.empty()
 
@@ -112,11 +111,10 @@ with tab1:
         cap = cv2.VideoCapture("temp.mp4")
         st_frame = c_left.empty()
         
-        # Controladores de la IA
+        # Controladores de la IA (Sin variables VBT)
         secuencia = []
         contador, estado, mejor_conf = 0, "ESPERANDO", 0
         y_ini, frames_bloqueo = None, 0
-        velocidades, y_prev = [], None
         frame_profundo, kp_hoyo = None, None
         y_max_hoyo = -1.0 
         
@@ -148,14 +146,9 @@ with tab1:
                 h_y = (atleta_kp[5][1] + atleta_kp[6][1]) / 2
                 cadera_y = (atleta_kp[11][1] + atleta_kp[12][1]) / 2
                 
-                if y_ini is None: y_ini = h_y; y_prev = h_y; continue
+                if y_ini is None: y_ini = h_y; continue
                 
-                # 1. Tracker VBT (Velocidad)
-                v_inst = abs(h_y - y_prev)
-                velocidades.append(v_inst)
-                y_prev = h_y
-                
-                # 2. EXTRACCIÓN DE PUNTOS PARA EL MODELO LSTM (51 Puntos Normalizados)
+                # EXTRACCIÓN DE PUNTOS PARA EL MODELO LSTM (51 Puntos Normalizados)
                 kp_crudo = res[0].keypoints.data[0].cpu().numpy().flatten()
                 
                 if len(kp_crudo) == 51:
@@ -173,7 +166,7 @@ with tab1:
                 if len(secuencia) > 30: 
                     secuencia.pop(0)
                 
-                # 3. MÁQUINA DE ESTADOS Y PREDICCIÓN
+                # MÁQUINA DE ESTADOS Y PREDICCIÓN
                 if frames_bloqueo > 0: frames_bloqueo -= 1
                 else:
                     dist = h_y - y_ini
@@ -228,16 +221,23 @@ with tab1:
                         estado = "ESPERANDO"
                 
                 reps_st.metric("REPSET", contador)
-                grafico_v.line_chart(velocidades[-50:])
             st_frame.image(res[0].plot(), channels="BGR")
         cap.release()
 
-        # --- SECCIÓN NLP (OLLAMA COACH) ---
+        # --- SECCIÓN NLP (EVALUACIÓN DE MODELOS) ---
         with coach_area.container():
-            if st.button("🎙️ Pedir Feedback al Entrenador", type="primary", use_container_width=True):
-                with st.spinner("El entrenador virtual está escribiendo su reporte..."):
+            st.markdown("---")
+            st.markdown("### 🧪 Laboratorio NLP: Comparativa de Modelos")
+            
+            # El selector de modelos
+            modelo_elegido = st.selectbox(
+                "Selecciona el Motor de Lenguaje (LLM):", 
+                ["llama3.2", "phi3"] # Asegúrate de haber hecho 'ollama pull phi3'
+            )
+            
+            if st.button(f"🎙️ Pedir Feedback a {modelo_elegido.upper()}", type="primary", use_container_width=True):
+                with st.spinner(f"{modelo_elegido} está escribiendo su reporte..."):
                     
-                    # Limpiamos caracteres para el LLM
                     fallos_limpios = [f.replace("⚠️", "").replace("⭐", "").replace("**", "").strip() for f in ultimos_fallos]
                     
                     prompt_entrenador = f"""
@@ -254,12 +254,13 @@ with tab1:
                     """
                     
                     try:
-                        respuesta = ollama.chat(model='llama3.2', messages=[
+                        # Pasamos la variable dinámica del modelo
+                        respuesta = ollama.chat(model=modelo_elegido, messages=[
                             {'role': 'user', 'content': prompt_entrenador}
                         ])
-                        st.info(f"**Coach Virtual:**\n\n {respuesta['message']['content']}")
+                        st.info(f"**Coach Virtual ({modelo_elegido}):**\n\n {respuesta['message']['content']}")
                     except Exception as e:
-                        st.error("Error al conectar con Ollama. ¿Está la app abierta en tu PC?")
+                        st.error(f"Error al conectar. ¿Has descargado el modelo con 'ollama pull {modelo_elegido}'?")
 
 # ==========================================
 # --- TAB 2: ARQUITECTO BIOMECÁNICO + NLP ---
@@ -314,7 +315,7 @@ with tab2:
                             st.error("Error al conectar con Ollama. Asegúrate de tenerlo abierto.")
 
 # ==========================================
-# --- TAB 3 y TAB 4 (Sin cambios) ---
+# --- TAB 3 y TAB 4 ---
 # ==========================================
 with tab3:
     st.header("📊 Nivel Competitivo")
