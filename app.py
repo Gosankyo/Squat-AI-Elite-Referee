@@ -232,13 +232,16 @@ with tab1:
             # El selector de modelos
             modelo_elegido = st.selectbox(
                 "Selecciona el Motor de Lenguaje (LLM):", 
-                ["llama3.2", "phi3"] # Asegúrate de haber hecho 'ollama pull phi3'
+                ["llama3.2", "qwen2.5"] 
             )
             
             if st.button(f"🎙️ Pedir Feedback a {modelo_elegido.upper()}", type="primary", use_container_width=True):
                 with st.spinner(f"{modelo_elegido} está escribiendo su reporte..."):
                     
-                    fallos_limpios = [f.replace("⚠️", "").replace("⭐", "").replace("**", "").strip() for f in ultimos_fallos]
+                    ultimo_veredicto = "NULA"
+                    ultima_confianza = 0.95
+                    ultimo_ang_torso = 65.5 # ¡Peligrosamente inclinado!
+                    fallos_limpios = ["Torso Inclinado (Good Morning Squat)", "Exceso de carga lumbar"]
                     
                     prompt_entrenador = f"""
                     Actúa como un entrenador de Powerlifting de élite. 
