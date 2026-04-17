@@ -238,11 +238,6 @@ with tab1:
             if st.button(f"🎙️ Pedir Feedback a {modelo_elegido.upper()}", type="primary", use_container_width=True):
                 with st.spinner(f"{modelo_elegido} está escribiendo su reporte..."):
                     
-                    ultimo_veredicto = "NULA"
-                    ultima_confianza = 0.98
-                    ultimo_ang_torso = 30.0 # Torso razonable
-                    fallos_limpios = ["Falta de profundidad (High Squat)", "Limitación en la flexión de tobillo", "Butt wink leve"]
-                    
                     prompt_entrenador = f"""
                     Actúa como un entrenador de Powerlifting de élite. 
                     El sistema biomecánico acaba de analizar a tu atleta con estos datos:
