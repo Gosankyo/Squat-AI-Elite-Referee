@@ -239,9 +239,9 @@ with tab1:
                 with st.spinner(f"{modelo_elegido} está escribiendo su reporte..."):
                     
                     ultimo_veredicto = "NULA"
-                    ultima_confianza = 0.95
-                    ultimo_ang_torso = 65.5 # ¡Peligrosamente inclinado!
-                    fallos_limpios = ["Torso Inclinado (Good Morning Squat)", "Exceso de carga lumbar"]
+                    ultima_confianza = 0.98
+                    ultimo_ang_torso = 30.0 # Torso razonable
+                    fallos_limpios = ["Falta de profundidad (High Squat)", "Limitación en la flexión de tobillo", "Butt wink leve"]
                     
                     prompt_entrenador = f"""
                     Actúa como un entrenador de Powerlifting de élite. 
