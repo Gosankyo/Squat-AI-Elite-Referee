@@ -4,17 +4,18 @@ from ultralytics import YOLO
 from tensorflow.keras.models import load_model
 import pyttsx3
 import threading
+from voice_trigger import NLPVoiceAssistant
+from knowledge_base import BiomechanicsExpertSystem # <-- INTEGRACIÓN SISTEMAS INTELIGENTES
 
-print("🚀 Iniciando Motor Biomecánico en Vivo...")
+print("🚀 Iniciando Motor Biomecánico...")
 
 # --- 1. CONFIGURACIÓN DE VOZ (TTS) ---
 def coach_habla(texto):
     """Ejecuta la voz en un hilo separado para no congelar la cámara"""
     def run_tts():
         try:
-            # Inicializamos el motor de voz
             engine = pyttsx3.init()
-            engine.setProperty('rate', 160) # Velocidad al hablar
+            engine.setProperty('rate', 160)
             engine.say(texto)
             engine.runAndWait()
         except:
@@ -25,10 +26,27 @@ def coach_habla(texto):
 print("🧠 Cargando Inteligencia Artificial...")
 yolo_pose = YOLO('yolov8n-pose.pt')
 model_ia = load_model('modelo_squat_biomecanico.h5')
-print("✅ IA Cargada. Encendiendo cámara...")
+print("✅ IA Cargada.")
 
-# --- 3. CONFIGURACIÓN DE WEBCAM ---
-cap = cv2.VideoCapture(0) # 0 es la cámara por defecto de tu PC
+print("🧑‍⚕️ Cargando Sistema Experto Biomecánico...")
+expert_system = BiomechanicsExpertSystem() # <-- INICIALIZACIÓN SISTEMA EXPERTO
+
+# --- 3. MÓDULO NLP: ACTIVACIÓN POR VOZ ---
+assistant = NLPVoiceAssistant()
+print("\n" + "="*50)
+print("🎙️ SISTEMA ESPERANDO COMANDO DE VOZ")
+print("="*50)
+print("Dí claramente: 'start analysis' para comenzar...")
+
+if not assistant.wait_for_command(wake_word="start analysis"):
+    print("Saliendo...")
+    exit()
+
+print("¡Comando reconocido! Encendiendo cámara...")
+coach_habla("Sistema preparado. Vamos a por esa sentadilla.")
+
+# --- 4. CONFIGURACIÓN DE CÁMARA ---
+cap = cv2.VideoCapture(0)
 
 # Variables de control
 secuencia = []
@@ -40,68 +58,61 @@ frames_bloqueo = 0
 ultimo_veredicto = "Haz una sentadilla"
 color_hud = (255, 255, 255)
 
-coach_habla("Sistema preparado. Vamos a por esa sentadilla.")
-
-# --- 4. BUCLE EN TIEMPO REAL ---
+# --- 5. BUCLE EN TIEMPO REAL ---
 while cap.isOpened():
     ret, frame = cap.read()
     if not ret: break
     
-    # Espejo visual (opcional, para verte como en un espejo)
-    # frame = cv2.flip(frame, 1) 
-    
-    # Detección rápida de YOLO
     res = yolo_pose.predict(frame, conf=0.5, verbose=False)
-    frame_final = res[0].plot() # Dibujamos el esqueleto
+    frame_final = res[0].plot() 
     
     if res[0].keypoints and len(res[0].keypoints.data) > 0:
         det = res[0].keypoints.data.cpu().numpy()
-        boxes = res[0].boxes.data.cpu().numpy()
-        
-        # Seleccionamos a la persona principal
         atleta_kp = det[0]
         
-        # Tracker altura (Media de los hombros y cadera)
+        # Coordenadas hombros (h) y cadera (c)
+        h_x = (atleta_kp[5][0] + atleta_kp[6][0]) / 2
         h_y = (atleta_kp[5][1] + atleta_kp[6][1]) / 2
-        cadera_y = (atleta_kp[11][1] + atleta_kp[12][1]) / 2
+        c_x = (atleta_kp[11][0] + atleta_kp[12][0]) / 2
+        c_y = (atleta_kp[11][1] + atleta_kp[12][1]) / 2
         
         if y_ini is None: 
             y_ini = h_y
             continue
             
-        # Extracción de puntos normalizados para la IA (Centrado en Cadera)
+        if estado == "ESPERANDO":
+            if h_y < y_ini:
+                y_ini = h_y
+            elif h_y > y_ini and (h_y - y_ini) < 30:
+                y_ini = int((y_ini * 0.9) + (h_y * 0.1))
+
         kp_crudo = res[0].keypoints.data[0].cpu().numpy().flatten()
         
         if len(kp_crudo) == 51:
             hip_l = kp_crudo[11*3 : 11*3+3]
             hip_r = kp_crudo[12*3 : 12*3+3]
             centro_cadera = (hip_l + hip_r) / 2
-            
             kp_norm = kp_crudo.copy()
             for i in range(17):
                 kp_norm[i*3 : i*3+3] -= centro_cadera
-            
             secuencia.append(kp_norm)
         
-        # Mantenemos los últimos 30 fotogramas
         if len(secuencia) > 30: 
             secuencia.pop(0)
 
-        # --- MÁQUINA DE ESTADOS Y PREDICCIÓN ---
+        # --- MÁQUINA DE ESTADOS ---
         if frames_bloqueo > 0: 
             frames_bloqueo -= 1
         else:
             dist = h_y - y_ini
             
-            # Detecta que empieza a bajar
-            if dist > 50 and estado == "ESPERANDO": 
+            if dist > 120 and estado == "ESPERANDO": 
                 estado = "BAJANDO"
                 mejor_conf = 0.0
-                color_hud = (0, 165, 255) # Naranja
+                color_hud = (0, 165, 255)
                 ultimo_veredicto = "Analizando..."
             
             if estado == "BAJANDO":
-                # Predicción continua
                 seq_array = np.array(secuencia)
                 pad_len = 30 - len(seq_array)
                 if pad_len > 0:
@@ -110,30 +121,46 @@ while cap.isOpened():
                 pred = model_ia.predict(np.expand_dims(seq_array, axis=0), verbose=0)[0]
                 if pred[0] > mejor_conf: mejor_conf = pred[0]
             
-            # Detecta que ha subido (Termina la repetición)
-            if dist < 30 and estado == "BAJANDO":
+            if dist < 40 and estado == "BAJANDO":
                 contador += 1
-                frames_bloqueo = 45 # Bloqueo para evitar dobles conteos
+                frames_bloqueo = 45 
                 estado = "ESPERANDO"
                 
-                # LA DECISIÓN FINAL Y LA VOZ
-                if mejor_conf > 0.50:
-                    ultimo_veredicto = f"VALIDA ({round(mejor_conf*100)}%)"
-                    color_hud = (0, 255, 0) # Verde
-                    coach_habla("¡Válida! Tres luces blancas.")
-                else: 
-                    ultimo_veredicto = f"NULA ({round((1-mejor_conf)*100)}%)"
-                    color_hud = (0, 0, 255) # Rojo
-                    coach_habla("¡Nula! No has roto el paralelo.")
+                # --- LA DECISIÓN FINAL (POR EL SISTEMA EXPERTO) ---
+                # 1. Extraemos Hechos
+                profundidad_ok = True if mejor_conf > 0.50 else False
+                
+                # Cálculo de ángulo del torso
+                dx = abs(h_x - c_x)
+                dy = abs(h_y - c_y)
+                angulo_torso = np.degrees(np.arctan2(dx, dy)) if dy != 0 else 0
 
-    # --- INTERFAZ VISUAL EN PANTALLA (HUD) ---
+                facts = {
+                    "depth_achieved": profundidad_ok,
+                    "torso_angle": angulo_torso
+                }
+
+                # 2. Inferencia del Sistema Experto
+                diagnostico = expert_system.infer_diagnosis(facts)
+
+                # 3. Respuesta Multimodal
+                if diagnostico["is_safe"]:
+                    ultimo_veredicto = f"VALIDA ({round(mejor_conf*100)}%)"
+                    color_hud = (0, 255, 0)
+                    coach_habla("Válida. Tres luces blancas.")
+                else: 
+                    ultimo_veredicto = "NULA / AVISO"
+                    color_hud = (0, 0, 255)
+                    # El coach te lee el primer aviso de la lista de diagnóstico
+                    coach_habla(diagnostico["feedback"][0])
+
+    # --- HUD ---
     cv2.putText(frame_final, f"REPS: {contador}", (20, 50), cv2.FONT_HERSHEY_SIMPLEX, 1.5, (255, 255, 255), 4)
     cv2.putText(frame_final, estado, (20, 100), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 0), 2)
-    cv2.putText(frame_final, ultimo_veredicto, (20, frame_final.shape[0] - 30), cv2.FONT_HERSHEY_SIMPLEX, 1.5, color_hud, 4)
+    cv2.putText(frame_final, ultimo_veredicto, (20, frame_final.shape[0] - 30), cv2.FONT_HERSHEY_SIMPLEX, 1.2, color_hud, 3)
     
-    cv2.imshow("🏋️‍♂️ SQUAT AI - Live Demo", frame_final)
+    cv2.imshow("🏋️‍♂️ Squat AI - Expert System", frame_final)
     
-    # Salir con la tecla 'q'
     if cv2.waitKey(1) & 0xFF == ord('q'):
         break
 
