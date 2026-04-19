@@ -5,9 +5,10 @@ from tensorflow.keras.models import load_model
 import pyttsx3
 import threading
 from voice_trigger import NLPVoiceAssistant
-from knowledge_base import BiomechanicsExpertSystem # <-- INTEGRACIÓN SISTEMAS INTELIGENTES
+from knowledge_base import BiomechanicsExpertSystem
+from cv_geometry import VisionMetrics # <-- INTEGRACIÓN COMPUTER VISION
 
-print("🚀 Iniciando Motor Biomecánico...")
+print("🚀 Iniciando Motor Biomecánico Multidisciplinar...")
 
 # --- 1. CONFIGURACIÓN DE VOZ (TTS) ---
 def coach_habla(texto):
@@ -22,14 +23,16 @@ def coach_habla(texto):
             pass
     threading.Thread(target=run_tts, daemon=True).start()
 
-# --- 2. CARGA DE MODELOS ---
-print("🧠 Cargando Inteligencia Artificial...")
+# --- 2. CARGA DE MODELOS E IA CLÁSICA ---
+print("🧠 Cargando Redes Neuronales (YOLO & LSTM)...")
 yolo_pose = YOLO('yolov8n-pose.pt')
 model_ia = load_model('modelo_squat_biomecanico.h5')
-print("✅ IA Cargada.")
 
 print("🧑‍⚕️ Cargando Sistema Experto Biomecánico...")
-expert_system = BiomechanicsExpertSystem() # <-- INICIALIZACIÓN SISTEMA EXPERTO
+expert_system = BiomechanicsExpertSystem()
+
+print("📏 Cargando Módulo de Geometría Óptica...")
+v_metrics = VisionMetrics(reference_width_cm=45.0) # Hombros estándar
 
 # --- 3. MÓDULO NLP: ACTIVACIÓN POR VOZ ---
 assistant = NLPVoiceAssistant()
@@ -43,7 +46,7 @@ if not assistant.wait_for_command(wake_word="start analysis"):
     exit()
 
 print("¡Comando reconocido! Encendiendo cámara...")
-coach_habla("Sistema preparado. Vamos a por esa sentadilla.")
+coach_habla("Sistema iniciado. Calibrando telemetría óptica.")
 
 # --- 4. CONFIGURACIÓN DE CÁMARA ---
 cap = cv2.VideoCapture(0)
@@ -57,6 +60,7 @@ y_ini = None
 frames_bloqueo = 0
 ultimo_veredicto = "Haz una sentadilla"
 color_hud = (255, 255, 255)
+dist_cm = 0.0 # Variable para guardar los centímetros bajados
 
 # --- 5. BUCLE EN TIEMPO REAL ---
 while cap.isOpened():
@@ -70,7 +74,6 @@ while cap.isOpened():
         det = res[0].keypoints.data.cpu().numpy()
         atleta_kp = det[0]
         
-        # Coordenadas hombros (h) y cadera (c)
         h_x = (atleta_kp[5][0] + atleta_kp[6][0]) / 2
         h_y = (atleta_kp[5][1] + atleta_kp[6][1]) / 2
         c_x = (atleta_kp[11][0] + atleta_kp[12][0]) / 2
@@ -81,6 +84,10 @@ while cap.isOpened():
             continue
             
         if estado == "ESPERANDO":
+            # [QUICK WIN CV] Calibración métrica continua mientras estás de pie
+            v_metrics.calibrate_scale(atleta_kp)
+            dist_cm = 0.0 # Reseteamos la distancia al esperar
+            
             if h_y < y_ini:
                 y_ini = h_y
             elif h_y > y_ini and (h_y - y_ini) < 30:
@@ -105,12 +112,15 @@ while cap.isOpened():
             frames_bloqueo -= 1
         else:
             dist = h_y - y_ini
+            # Calculamos la distancia en CM reales usando el calibrador
+            if dist > 0:
+                dist_cm = v_metrics.pixels_to_cm(dist)
             
             if dist > 120 and estado == "ESPERANDO": 
                 estado = "BAJANDO"
                 mejor_conf = 0.0
                 color_hud = (0, 165, 255)
-                ultimo_veredicto = "Analizando..."
+                ultimo_veredicto = "Analizando Profundidad..."
             
             if estado == "BAJANDO":
                 seq_array = np.array(secuencia)
@@ -126,11 +136,9 @@ while cap.isOpened():
                 frames_bloqueo = 45 
                 estado = "ESPERANDO"
                 
-                # --- LA DECISIÓN FINAL (POR EL SISTEMA EXPERTO) ---
-                # 1. Extraemos Hechos
+                # --- LA DECISIÓN FINAL ---
                 profundidad_ok = True if mejor_conf > 0.50 else False
                 
-                # Cálculo de ángulo del torso
                 dx = abs(h_x - c_x)
                 dy = abs(h_y - c_y)
                 angulo_torso = np.degrees(np.arctan2(dx, dy)) if dy != 0 else 0
@@ -140,26 +148,25 @@ while cap.isOpened():
                     "torso_angle": angulo_torso
                 }
 
-                # 2. Inferencia del Sistema Experto
                 diagnostico = expert_system.infer_diagnosis(facts)
 
-                # 3. Respuesta Multimodal
                 if diagnostico["is_safe"]:
                     ultimo_veredicto = f"VALIDA ({round(mejor_conf*100)}%)"
                     color_hud = (0, 255, 0)
-                    coach_habla("Válida. Tres luces blancas.")
+                    coach_habla("Válida.")
                 else: 
                     ultimo_veredicto = "NULA / AVISO"
                     color_hud = (0, 0, 255)
-                    # El coach te lee el primer aviso de la lista de diagnóstico
                     coach_habla(diagnostico["feedback"][0])
 
-    # --- HUD ---
+    # --- HUD VISUAL ---
     cv2.putText(frame_final, f"REPS: {contador}", (20, 50), cv2.FONT_HERSHEY_SIMPLEX, 1.5, (255, 255, 255), 4)
     cv2.putText(frame_final, estado, (20, 100), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 0), 2)
+    # Mostramos los centímetros bajados en color amarillo cian
+    cv2.putText(frame_final, f"DESCENSO: {dist_cm} cm", (20, 140), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 255), 2)
     cv2.putText(frame_final, ultimo_veredicto, (20, frame_final.shape[0] - 30), cv2.FONT_HERSHEY_SIMPLEX, 1.2, color_hud, 3)
     
-    cv2.imshow("🏋️‍♂️ Squat AI - Expert System", frame_final)
+    cv2.imshow("🏋️‍♂️ Squat AI - Visión Métrica", frame_final)
     
     if cv2.waitKey(1) & 0xFF == ord('q'):
         break
