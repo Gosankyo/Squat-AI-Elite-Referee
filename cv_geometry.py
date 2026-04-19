@@ -2,54 +2,55 @@ import numpy as np
 
 class VisionMetrics:
     """
-    Modulo de Geometria de Camara para Squat AI.
-    Convierte medidas de pixeles en pantalla a centimetros reales (Metric Vision).
-    Cumple con los requisitos de Geometria y Calibracion de Computer Vision.
+    Pixel-to-metric conversion using shoulder width calibration.
+    Enables real-world distance measurements from video coordinates.
     """
     
     def __init__(self, reference_width_cm=45.0):
-        # Asumimos una anchura media de hombros estandar (45cm biacromial)
+        # Reference shoulder width (biacromial distance in cm)
         self.ref_cm = reference_width_cm
-        self.cm_per_pixel = None # Factor de conversion
+        # Calibration state: cm per pixel ratio (None until calibrated)
+        self.cm_per_pixel = None
         
     def calibrate_scale(self, keypoints):
         """
-        Calcula el factor cm/pixel basandose en la anchura de hombros actual.
-        Llamar a esta funcion cuando el atleta este de pie y recto.
+        Calibrates pixel-to-cm conversion using shoulder width.
+        Should be called with athlete in upright position.
         """
-        # Keypoints YOLO: 5 (hombro izq), 6 (hombro der)
-        h_izq = keypoints[5][:2] # Tomamos solo (x, y)
-        h_der = keypoints[6][:2]
+        # Extract shoulder keypoints from YOLO (indices 5 and 6)
+        left_shoulder = keypoints[5][:2]
+        right_shoulder = keypoints[6][:2]
         
-        # Calculamos la distancia euclidea en pixeles (Ancho de hombros)
-        pixel_width = np.linalg.norm(h_izq - h_der)
+        # Calculate shoulder width in pixels using Euclidean distance
+        pixel_width = np.linalg.norm(left_shoulder - right_shoulder)
         
-        if pixel_width > 10: # Evitar division por cero o errores de YOLO
+        # Validate measurement and update conversion factor
+        if pixel_width > 10:
             self.cm_per_pixel = self.ref_cm / pixel_width
             return True
         return False
         
     def pixels_to_cm(self, pixel_distance):
-        """Convierte una distancia en pixeles a centimetros reales."""
+        """Converts pixel distance to real-world centimeters."""
         if self.cm_per_pixel is not None:
             return round(pixel_distance * self.cm_per_pixel, 1)
         return 0.0
 
-# --- Prueba del Modulo ---
+# Test module calibration
 if __name__ == "__main__":
     v_metrics = VisionMetrics()
     
-    # Simulamos keypoints YOLO (h_izq en 100,200 y h_der en 300,200) -> 200px
-    simulated_kp = np.zeros((17, 3))
-    simulated_kp[5] = [100, 200, 0.9] # Hombro izq
-    simulated_kp[6] = [300, 200, 0.9] # Hombro der
+    # Simulate YOLO keypoints: shoulders separated by 200 pixels
+    simulated_keypoints = np.zeros((17, 3))
+    simulated_keypoints[5] = [100, 200, 0.9]  # Left shoulder
+    simulated_keypoints[6] = [300, 200, 0.9]  # Right shoulder
     
-    if v_metrics.calibrate_scale(simulated_kp):
-        print("\n--- INFORME DE CALIBRACION OPTICA ---")
-        print(f"Ancho de hombros detectado: 200 pixeles.")
-        print(f"Referencia real: 45.0 cm.")
-        print(f"Factor de conversion: {round(v_metrics.cm_per_pixel, 4)} cm/pixel.")
+    if v_metrics.calibrate_scale(simulated_keypoints):
+        print("[CALIBRATION] Vision metrics calibration successful")
+        print(f"  Detected shoulder width: 200 pixels")
+        print(f"  Reference width: 45.0 cm")
+        print(f"  Conversion factor: {round(v_metrics.cm_per_pixel, 4)} cm/pixel")
         
-        # Probamos a convertir la profundidad de 120px
-        prof_cm = v_metrics.pixels_to_cm(120)
-        print(f"Una bajada de 120 pixeles equivale a: {prof_cm} cm reales.")
+        # Test pixel-to-cm conversion
+        depth_cm = v_metrics.pixels_to_cm(120)
+        print(f"  Descent of 120 pixels: {depth_cm} cm")

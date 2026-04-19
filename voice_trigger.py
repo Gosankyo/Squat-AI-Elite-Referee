@@ -3,51 +3,51 @@ import time
 
 class NLPVoiceAssistant:
     """
-    Automatic Speech Recognition (ASR) module for Squat AI.
-    Listens for specific voice commands to trigger the Computer Vision pipeline,
-    satisfying the Speech-to-Text requirements for the NLP architecture.
+    Automatic Speech Recognition (ASR) module.
+    Implements voice command detection for pipeline triggering.
+    Uses Google Speech-to-Text API for command transcription.
     """
     
     def __init__(self):
         self.recognizer = sr.Recognizer()
-        # Adjust energy threshold for gym environments (background noise)
+        # Energy threshold set for high-noise environments (400 dB)
         self.recognizer.energy_threshold = 400 
         
     def wait_for_command(self, wake_word="start analysis", language="en-US"):
         """
-        Continuously listens to the microphone until the wake_word is detected.
-        Uses Google's Web Speech API for transcription.
+        Listens to microphone input until wake word is detected.
+        Returns True on successful command recognition, False on abort.
         """
-        print(f"\n[NLP Module] Microphone active. Waiting for voice command: '{wake_word}'...")
+        print(f"[ASR] Listening for command: '{wake_word}'")
         
         with sr.Microphone() as source:
-            # Calibrate for ambient noise for 1 second
+            # Calibrate ambient noise baseline (1 second)
             self.recognizer.adjust_for_ambient_noise(source, duration=1)
             
             while True:
                 try:
-                    # Listen for a phrase (max 5 seconds per phrase)
+                    # Listen for audio input (5 second limit, 1 second timeout)
                     audio = self.recognizer.listen(source, timeout=1, phrase_time_limit=5)
                     
-                    # Transcribe speech to text
+                    # Send to Google STT API for transcription
                     text = self.recognizer.recognize_google(audio, language=language).lower()
-                    print(f"  -> [Speech-to-Text] Transcribed: '{text}'")
+                    print(f"[ASR] Recognized: '{text}'")
                     
                     if wake_word in text:
-                        print(f"\n[SUCCESS] [NLP Module] Command '{wake_word}' recognized! Triggering Pipeline...")
+                        print(f"[ASR] Command matched. Pipeline initialization starting...")
                         return True
                     elif "stop" in text or "exit" in text:
-                        print("\n[STOP] [NLP Module] Stop command recognized. Aborting.")
+                        print("[ASR] Abort command received. Shutting down.")
                         return False
                         
                 except sr.WaitTimeoutError:
-                    # No speech detected, continue looping
+                    # Timeout waiting for speech. Continue listening.
                     continue
                 except sr.UnknownValueError:
-                    # Audio detected but could not be transcribed
+                    # Audio present but unintelligible. Continue listening.
                     continue
                 except sr.RequestError as e:
-                    print(f"[ERROR] [NLP Module] API unavailable: {e}")
+                    print(f"[ERROR] API connection failed: {e}")
                     return False
 
 # --- Testing the module independently ---

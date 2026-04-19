@@ -1,55 +1,56 @@
 class BiomechanicsExpertSystem:
     """
-    Sistema Basado en Conocimiento (Knowledge-Based System) para Squat AI.
-    Actua como un Motor de Inferencia Forward-Chaining que aplica reglas
-    de literatura cientifica (Schoenfeld, Escamilla) a los hechos geometricos.
+    Rule-based inference engine for biomechanical validation.
+    Applies expert-defined thresholds to keypoint data.
+    References: Schoenfeld (2010), Escamilla (2001), Bryanton (2012).
     """
     
     def __init__(self):
-        # La "Base de Conocimiento": Reglas y umbrales definidos por expertos
+        # Expert-defined thresholds for biomechanical validation
         self.rules = {
-            "max_torso_angle": 65.5, # Schoenfeld (2010): Limite de tension por cizalla
-            "knee_valgus_threshold": 10.0, # Escamilla (2001): Grados de tolerancia hacia adentro
-            "hip_depth_multiplier": 1.1 # Bryanton (2012): Reclutamiento de cadena posterior
+            "max_torso_angle": 65.5,  # Max forward lean before shear stress risk
+            "knee_valgus_threshold": 10.0,  # Max inward knee deviation (degrees)
+            "hip_depth_multiplier": 1.1  # Depth achievement coefficient
         }
         
     def infer_diagnosis(self, facts):
         """
-        Motor de Inferencia: Recibe un diccionario de 'hechos' (facts) y
-        aplica las reglas para generar un diagnostico.
+        Inference engine: evaluates facts against expert rules.
+        Returns safety assessment with diagnostic feedback.
         """
         diagnosis = []
         is_safe = True
         
-        # Hecho 1: Inclinacion del Torso
+        # Evaluate torso angle against Schoenfeld threshold
         if "torso_angle" in facts:
             if facts["torso_angle"] > self.rules["max_torso_angle"]:
-                diagnosis.append("ADVERTENCIA (Schoenfeld): Inclinacion excesiva del torso. Riesgo de cizalla espinal.")
+                diagnosis.append("WARNING (Schoenfeld): Excessive torso lean increases spinal shear stress.")
                 is_safe = False
                 
-        # Hecho 2: Estabilidad de la Rodilla (Valgo)
+        # Evaluate knee stability against Escamilla threshold
         if "knee_valgus_angle" in facts:
             if facts["knee_valgus_angle"] > self.rules["knee_valgus_threshold"]:
-                diagnosis.append("ADVERTENCIA (Escamilla): Valgo de rodilla detectado. Riesgo para ligamento cruzado (ACL).")
+                diagnosis.append("WARNING (Escamilla): Knee valgus detected - assess ACL loading.")
                 is_safe = False
                 
-        # Hecho 3: Analisis de Profundidad Relativa
+        # Validate squat depth achievement
         if "depth_achieved" in facts and not facts["depth_achieved"]:
-            diagnosis.append("AVISO TECNICO (Bryanton): Profundidad insuficiente para maximo reclutamiento de cadena posterior.")
+            diagnosis.append("TECHNICAL ALERT (Bryanton): Insufficient depth achieved for optimal posterior chain recruitment.")
             is_safe = False
 
         if not diagnosis:
-            diagnosis.append("Diagnostico Biomecanico: Ejecucion Segura y Competitiva.")
+            diagnosis.append("PASS: Biomechanically sound execution pattern detected.")
 
         return {
             "is_safe": is_safe,
             "feedback": diagnosis
         }
 
-# --- Prueba del Motor de Inferencia ---
+# Test inference engine
 if __name__ == "__main__":
     expert = BiomechanicsExpertSystem()
     
+    # Simulate biomechanical fact set
     simulated_facts = {
         "torso_angle": 68.0, 
         "knee_valgus_angle": 5.0, 
@@ -57,6 +58,6 @@ if __name__ == "__main__":
     }
     
     result = expert.infer_diagnosis(simulated_facts)
-    print("\n--- INFORME DEL SISTEMA EXPERTO ---")
+    print("[EXPERT] Biomechanical Inference Report")
     for msg in result["feedback"]:
-        print("-", msg)
+        print(f"  - {msg}")

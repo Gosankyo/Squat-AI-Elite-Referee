@@ -3,335 +3,413 @@ import cv2
 from ultralytics import YOLO
 import numpy as np
 from tensorflow.keras.models import load_model
-import pandas as pd
 import ollama
 
-# --- 1. CONFIGURACIÓN ---
-st.set_page_config(page_title="SQUAT AI ULTRA ELITE - EDICIÓN NLP", layout="wide", page_icon="🚀")
+# Configuration for Streamlit interface
+st.set_page_config(page_title="Squat AI Biomechanical Analysis", layout="wide", page_icon="🚀")
 
 st.markdown("""
     <style>
     .main { background-color: #0b0e14; color: #e0e0e0; }
-    .stMetric { background-color: #161b22; border: 1px solid #3b82f6; box-shadow: 0px 0px 10px #3b82f6; border-radius: 15px; }
+    .stMetric { background-color: #161b22; border: 1px solid #3b82f6; box-shadow: 0px 0px 10px #3b82f6; border-radius: 15px; padding: 10px; }
     .stTabs [data-baseweb="tab"] { font-size: 20px; font-weight: bold; color: #8b949e; }
     .stTabs [aria-selected="true"] { color: #3b82f6; border-bottom: 3px solid #3b82f6; }
     h1, h2, h3 { color: #58a6ff; }
     </style>
     """, unsafe_allow_html=True)
 
-# --- 2. CARGA DE MODELOS ---
+# Load machine learning models
 @st.cache_resource
-def iniciar_modelos():
-    # Cerebro Biomecánico (Visión y Redes Neuronales)
-    model_ia = load_model('modelo_squat_biomecanico.h5')
-    yolo_pose = YOLO('yolov8n-pose.pt')
-    return model_ia, yolo_pose
+def load_models():
+    """Load YOLO pose estimation and LSTM biomechanical classification models."""
+    lstm_model = load_model('modelo_squat_biomecanico.h5')
+    yolo_model = YOLO('yolov8n-pose.pt')
+    return lstm_model, yolo_model
 
-model_ia, yolo_pose = iniciar_modelos()
+model_lstm, model_yolo = load_models()
 
-# --- 3. FUNCIONES DE ANÁLISIS BIOMECÁNICO ---
-def calculate_angle(a, b, c):
-    """Motor trigonométrico para calcular ángulos articulares"""
-    a, b, c = np.array(a), np.array(b), np.array(c)
-    radians = np.arctan2(c[1]-b[1], c[0]-b[0]) - np.arctan2(a[1]-b[1], a[0]-b[0])
-    angle = np.abs(radians * 180.0 / np.pi)
-    return 360 - angle if angle > 180.0 else angle
-
-def realizar_diagnostico_completo(kp_hoyo):
-    """Diagnóstico experto basado en el punto de máxima profundidad"""
-    if kp_hoyo is None:
-        return ["No se detectó el fondo de la sentadilla."], [""], 0
+# Biomechanical analysis functions
+def perform_full_diagnosis(keypoints_at_depth):
+    """Biomechanical diagnosis at maximum depth position."""
+    if keypoints_at_depth is None:
+        return ["Bottom position not detected."], [""], 0, False
         
-    dx_t = kp_hoyo[11][0] - kp_hoyo[5][0]
-    dy_t = kp_hoyo[11][1] - kp_hoyo[5][1]
-    angulo_torso = abs(np.degrees(np.arctan2(dx_t, dy_t)))
+    # --- [FIX] INVARIANT ANGLE: Calculate from center of shoulders to center of hips ---
+    shoulder_center_x = (keypoints_at_depth[5][0] + keypoints_at_depth[6][0]) / 2.0
+    shoulder_center_y = (keypoints_at_depth[5][1] + keypoints_at_depth[6][1]) / 2.0
+    hip_center_x = (keypoints_at_depth[11][0] + keypoints_at_depth[12][0]) / 2.0
+    hip_center_y = (keypoints_at_depth[11][1] + keypoints_at_depth[12][1]) / 2.0
+
+    dx_torso = hip_center_x - shoulder_center_x
+    dy_torso = hip_center_y - shoulder_center_y
+    torso_angle = abs(np.degrees(np.arctan2(dx_torso, dy_torso)))
     
-    ancho_caderas = abs(kp_hoyo[11][0] - kp_hoyo[12][0])
-    ancho_rodillas = abs(kp_hoyo[13][0] - kp_hoyo[14][0])
-    desequilibrio_cadera = abs(kp_hoyo[11][1] - kp_hoyo[12][1])
+    # Measure hip and knee width for valgus detection
+    hip_width = abs(keypoints_at_depth[11][0] - keypoints_at_depth[12][0])
+    knee_width = abs(keypoints_at_depth[13][0] - keypoints_at_depth[14][0])
+    hip_shift = abs(keypoints_at_depth[11][1] - keypoints_at_depth[12][1])
     
-    errores, soluciones = [], []
-    if angulo_torso > 45:
-        errores.append("⚠️ **Torso Inclinado:** Exceso de carga lumbar (Good Morning Squat).")
-        soluciones.append("Haz Sentadilla Frontal o Pausa en el hoyo.")
-    if ancho_rodillas < (ancho_caderas * 0.9):
-        errores.append("⚠️ **Valgo de Rodilla:** Tus rodillas colapsan hacia adentro.")
-        soluciones.append("Usa banda elástica en calentamiento (Monster walks).")
-    if desequilibrio_cadera > 15:
-        errores.append("⚠️ **Hip Shift:** Tu cadera se desplaza lateralmente.")
-        soluciones.append("Añade Sentadilla Búlgara para corregir asimetría.")
+    errors, solutions = [], []
+    is_safe = True
+    
+    if torso_angle > 45:
+        errors.append("[FORM] Excessive torso lean detected - spinal load risk.")
+        solutions.append("Consider Front Squat or pause squats for form correction.")
+        is_safe = False
+    if knee_width < (hip_width * 0.9):
+        errors.append("[FORM] Knee valgus detected - inward collapse pattern.")
+        solutions.append("Implement elastic band training and single-leg work.")
+        is_safe = False
+    if hip_shift > 15:
+        errors.append("[FORM] Lateral hip shift detected - asymmetrical loading.")
+        solutions.append("Add unilateral exercises to correct imbalance.")
+        is_safe = False
         
-    if not errores:
-        errores.append("⭐ **Técnica de Élite:** Sin fallos críticos detectados.")
-        soluciones.append("Sigue progresando en cargas, vas perfecto.")
+    if not errors:
+        errors.append("[FORM] Excellent technique - no critical form deviations.")
+        solutions.append("Continue progressive overload with current form pattern.")
         
-    return errores, soluciones, angulo_torso
+    return errors, solutions, torso_angle, is_safe
 
-def analizar_proporciones(puntos_kp):
-    h_y = (puntos_kp[5][1]+puntos_kp[6][1])/2
-    c_y = (puntos_kp[11][1]+puntos_kp[12][1])/2
-    r_y = (puntos_kp[13][1]+puntos_kp[14][1])/2
-    len_torso, len_femur = abs(c_y - h_y), abs(r_y - c_y)
-    ratio = len_femur / len_torso if len_torso != 0 else 0
-    if ratio > 0.88: return "FÉMURES LARGOS", "Barra Baja recomendada", ratio
-    elif ratio < 0.78: return "FÉMURES CORTOS", "Barra Alta recomendada", ratio
-    return "ESTRUCTURA NEUTRA", "Barra Media", ratio
+def analyze_proportions(keypoints):
+    """Analyze athlete anthropometry to recommend squat variant."""
+    shoulder_y = (keypoints[5][1] + keypoints[6][1]) / 2
+    hip_y = (keypoints[11][1] + keypoints[12][1]) / 2
+    knee_y = (keypoints[13][1] + keypoints[14][1]) / 2
+    torso_length, femur_length = abs(hip_y - shoulder_y), abs(knee_y - hip_y)
+    ratio = femur_length / torso_length if torso_length != 0 else 0
+    if ratio > 0.88: 
+        return "Long Femurs", "Low Bar Squat recommended", ratio
+    elif ratio < 0.78: 
+        return "Short Femurs", "High Bar Squat recommended", ratio
+    return "Neutral Structure", "Moderate Bar Position", ratio
 
-# --- 4. INTERFAZ ---
-st.sidebar.title("🚀 SQUAT AI CONTROL")
-lift_weight = st.sidebar.number_input("Peso en barra (kg)", value=100.0, step=2.5)
-user_weight = st.sidebar.number_input("Peso Corporal (kg)", value=75.0, step=0.5)
-sexo = st.sidebar.selectbox("Sexo", ["men", "women"])
-pais = st.sidebar.selectbox("Región", ["España", "Francia", "USA", "All"])
-mapa_paises = {"España": "all-spain", "Francia": "all-france", "USA": "all-usa", "All": "all"}
+# Sidebar configuration
+st.sidebar.title("System Configuration")
+lift_weight = st.sidebar.number_input("Weight on bar (kg)", value=100.0, step=2.5)
+user_weight = st.sidebar.number_input("Body Weight (kg)", value=75.0, step=0.5)
+gender = st.sidebar.selectbox("Gender", ["men", "women"])
+region = st.sidebar.selectbox("Region", ["Spain", "France", "USA", "All"])
+country_mapping = {"Spain": "all-spain", "France": "all-france", "USA": "all-usa", "All": "all"}
 
-tab1, tab2, tab3, tab4 = st.tabs(["🎥 JUEZ BIOMECÁNICO", "📐 ARQUITECTO", "📊 RANKING", "🕹️ ESTADO"])
+tab1, tab2, tab3, tab4 = st.tabs(["Biomechanical Referee", "Anatomical Architect", "Competitive Ranking", "System Status"])
 
-# ==========================================
-# --- TAB 1: JUEZ + COACH NLP ---
-# ==========================================
+# Tab 1: Real-time video analysis with biomechanical referee
 with tab1:
-    c_left, c_right = st.columns([2, 1])
-    with c_right:
-        reps_st = st.metric("REPSET", "0")
-        luces = st.empty()
+    col_left, col_right = st.columns([2, 1])
+    
+    with col_right:
+        rep_counter = st.metric("Completed Reps", "0")
+        status_lights = st.empty()
         
-        st.subheader("📸 Deep Capture")
-        deep_cap_area = st.empty()
+        st.subheader("Biomechanical Scorecard")
+        diagnosis_area = st.empty()
         
-        st.subheader("📝 Diagnóstico de IA")
-        diag_area = st.empty()
+        st.subheader("Depth Geometry")
+        depth_capture_area = st.empty()
         
-        st.subheader("💬 Entrenador Virtual (NLP)")
+        st.subheader("Virtual Coach")
         coach_area = st.empty()
 
-    video = st.file_uploader("Sube vídeo de sentadilla", type=['mp4', 'mov'])
+    with col_left:
+        st.info("Upload a side-angle squat video to begin the AI analysis workflow.")
+        video = st.file_uploader("Upload squat video", type=['mp4', 'mov'], label_visibility="collapsed")
+        frame_display = st.empty()
+
     if video:
-        with open("temp.mp4", "wb") as f: f.write(video.read())
-        cap = cv2.VideoCapture("temp.mp4")
-        st_frame = c_left.empty()
+        with open("temp.mp4", "wb") as f: 
+            f.write(video.read())
+        video_capture = cv2.VideoCapture("temp.mp4")
         
-        # Controladores de la IA (Sin variables VBT)
-        secuencia = []
-        contador, estado, mejor_conf = 0, "ESPERANDO", 0
-        y_ini, frames_bloqueo = None, 0
-        frame_profundo, kp_hoyo = None, None
-        y_max_hoyo = -1.0 
+        # Video processing state variables
+        keypoint_sequence = []
+        rep_count, state, best_confidence = 0, "IDLE", 0
+        y_initial, frame_lock = None, 0
+        frame_at_depth, keypoints_at_depth = None, None
+        y_max_depth = -1.0 
         
-        # Variables para Ollama
-        ultimo_veredicto = "Desconocido"
-        ultimos_fallos = []
-        ultima_confianza = 0.0
-        ultimo_ang_torso = 0.0
+        # NLP coaching variables
+        last_verdict = "Unknown"
+        last_errors = []
+        last_confidence = 0.0
+        last_torso_angle = 0.0
 
-        while cap.isOpened():
-            ret, frame = cap.read()
-            if not ret: break
+        while video_capture.isOpened():
+            ret, frame = video_capture.read()
+            if not ret: 
+                break
             
-            # --- ARREGLO DE PROPORCIÓN (ASPECT RATIO) ---
-            h_orig, w_orig = frame.shape[:2]
-            nuevo_ancho = 800
-            nuevo_alto = int(h_orig * (nuevo_ancho / w_orig))
-            frame_res = cv2.resize(frame, (nuevo_ancho, nuevo_alto))
+            # Resize frame for processing
+            frame_height, frame_width = frame.shape[:2]
+            new_width = 800
+            new_height = int(frame_height * (new_width / frame_width))
+            frame_resized = cv2.resize(frame, (new_width, new_height))
             
-            # YOLO detecta el esqueleto visualmente
-            res = yolo_pose.predict(frame_res, conf=0.5, verbose=False)
+            # YOLO pose detection
+            detection = model_yolo.predict(frame_resized, conf=0.5, verbose=False)
             
-            if res[0].keypoints and len(res[0].keypoints.data) > 0:
-                det = res[0].keypoints.data.cpu().numpy()
-                boxes = res[0].boxes.data.cpu().numpy()
-                atleta_kp = det[np.argmin([abs((b[0]+b[2])/2 - (nuevo_ancho/2)) for b in boxes])]
+            if detection[0].boxes and detection[0].keypoints and len(detection[0].keypoints.data) > 0:
+                keypoints_raw = detection[0].keypoints.data.cpu().numpy()
+                boxes = detection[0].boxes.data.cpu().numpy()
                 
-                # Coordenadas clave
-                h_y = (atleta_kp[5][1] + atleta_kp[6][1]) / 2
-                cadera_y = (atleta_kp[11][1] + atleta_kp[12][1]) / 2
+                best_idx = np.argmin([abs((b[0]+b[2])/2 - (new_width/2)) for b in boxes])
+                athlete_keypoints = keypoints_raw[best_idx]
                 
-                if y_ini is None: y_ini = h_y; continue
+                # --- [FIX] VISUAL TARGET MARKER ---
+                annotated_frame = detection[0].plot()
+                try:
+                    # Draw a target reticle over the nose of the evaluated athlete
+                    nose_x, nose_y = int(athlete_keypoints[0][0]), int(athlete_keypoints[0][1])
+                    cv2.circle(annotated_frame, (nose_x, nose_y), 8, (0, 255, 0), -1) 
+                    cv2.circle(annotated_frame, (nose_x, nose_y), 18, (0, 255, 255), 2)
+                except Exception:
+                    pass
                 
-                # EXTRACCIÓN DE PUNTOS PARA EL MODELO LSTM (51 Puntos Normalizados)
-                kp_crudo = res[0].keypoints.data[0].cpu().numpy().flatten()
+                # Extract key body positions
+                shoulder_y = (athlete_keypoints[5][1] + athlete_keypoints[6][1]) / 2
+                hip_y = (athlete_keypoints[11][1] + athlete_keypoints[12][1]) / 2
                 
-                if len(kp_crudo) == 51:
-                    hip_l = kp_crudo[11*3 : 11*3+3]
-                    hip_r = kp_crudo[12*3 : 12*3+3]
-                    centro_cadera = (hip_l + hip_r) / 2
+                if y_initial is None: 
+                    y_initial = shoulder_y
+                    continue
+                
+                keypoints_raw_flat = detection[0].keypoints.data[best_idx].cpu().numpy().flatten()
+                
+                if len(keypoints_raw_flat) == 51:
+                    hip_left = keypoints_raw_flat[11*3 : 11*3+3]
+                    hip_right = keypoints_raw_flat[12*3 : 12*3+3]
+                    hip_center = (hip_left + hip_right) / 2
                     
-                    kp_norm = kp_crudo.copy()
+                    keypoints_normalized = keypoints_raw_flat.copy()
                     for i in range(17):
-                        kp_norm[i*3 : i*3+3] -= centro_cadera
+                        keypoints_normalized[i*3 : i*3+3] -= hip_center
                     
-                    secuencia.append(kp_norm)
+                    keypoint_sequence.append(keypoints_normalized)
                 
-                # Mantenemos solo los últimos 30 frames para la IA
-                if len(secuencia) > 30: 
-                    secuencia.pop(0)
+                if len(keypoint_sequence) > 30: 
+                    keypoint_sequence.pop(0)
                 
-                # MÁQUINA DE ESTADOS Y PREDICCIÓN
-                if frames_bloqueo > 0: frames_bloqueo -= 1
+                # State machine
+                if frame_lock > 0: 
+                    frame_lock -= 1
                 else:
-                    dist = h_y - y_ini
-                    if dist > 60 and estado == "ESPERANDO": 
-                        estado = "BAJANDO"
-                        y_max_hoyo = -1.0 
-                        mejor_conf = 0.0
-                        kp_hoyo = None
+                    descent = shoulder_y - y_initial
+                    if descent > 60 and state == "IDLE": 
+                        state = "DESCENDING"
+                        y_max_depth = -1.0 
+                        best_confidence = 0.0
+                        keypoints_at_depth = None
+                        status_lights.info("Analyzing descent...")
                     
-                    if estado == "BAJANDO":
-                        if cadera_y > y_max_hoyo:
-                            y_max_hoyo = cadera_y
-                            frame_profundo = res[0].plot()
-                            kp_hoyo = atleta_kp 
+                    if state == "DESCENDING":
+                        if hip_y > y_max_depth:
+                            y_max_depth = hip_y
+                            frame_at_depth = annotated_frame.copy() # Use the frame with the target marker
+                            keypoints_at_depth = athlete_keypoints 
                             
-                        # Predicción continua con LSTM
-                        seq_array = np.array(secuencia)
-                        pad_len = 30 - len(seq_array)
-                        if pad_len > 0:
-                            seq_array = np.pad(seq_array, ((0, pad_len), (0, 0)), 'constant')
+                        sequence_array = np.array(keypoint_sequence)
+                        pad_length = 30 - len(sequence_array)
+                        if pad_length > 0:
+                            sequence_array = np.pad(sequence_array, ((0, pad_length), (0, 0)), 'constant')
                         
-                        pred = model_ia.predict(np.expand_dims(seq_array, axis=0), verbose=0)[0]
-                        if pred[0] > mejor_conf: mejor_conf = pred[0] # pred[0] es VÁLIDA
+                        prediction = model_lstm.predict(np.expand_dims(sequence_array, axis=0), verbose=0)[0]
+                        if prediction[0] > best_confidence: 
+                            best_confidence = prediction[0]
                     
-                    if dist < 35 and estado == "BAJANDO":
-                        contador += 1
-                        frames_bloqueo = 60
+                    if descent < 35 and state == "DESCENDING":
+                        rep_count += 1
+                        frame_lock = 60
                         
-                        # Guardamos datos para el prompt
-                        ultima_confianza = mejor_conf
+                        depth_achieved = best_confidence > 0.50
+                        errors, solutions, torso_angle, is_safe = perform_full_diagnosis(keypoints_at_depth)
                         
-                        if mejor_conf > 0.50:
-                            ultimo_veredicto = "VÁLIDA"
-                            luces.success(f"⚪ ⚪ ⚪ VÁLIDA (Confianza: {round(mejor_conf*100)}%)")
-                        else: 
-                            ultimo_veredicto = "NULA"
-                            luces.error(f"🔴 🔴 🔴 NULA (Confianza: {round((1-mejor_conf)*100)}%)")
-                            
-                        # Diagnóstico Biomecánico
-                        fallos, sols, ang_t = realizar_diagnostico_completo(kp_hoyo)
-                        ultimos_fallos = fallos
-                        ultimo_ang_torso = ang_t
+                        last_confidence = best_confidence
+                        last_torso_angle = torso_angle
+                        last_errors = [e for e in errors if "Excellent" not in e]
                         
-                        with diag_area.container():
-                            st.write(f"**Ángulo Torso Máximo:** {round(ang_t,1)}°")
-                            for f in fallos: st.error(f)
-                            for s in sols: st.success(f"📌 {s}")
+                        if not depth_achieved:
+                            last_verdict = "INVALID - High Squat"
+                            status_lights.warning(f"[FAIL] High Squat")
+                        elif not is_safe:
+                            last_verdict = "INVALID - Form Error"
+                            status_lights.error(f"[FAIL] Form Deviation")
+                        else:
+                            last_verdict = "VALID"
+                            status_lights.success(f"[PASS] Valid Rep")
+                        
+                        with diagnosis_area.container():
+                            c1, c2, c3 = st.columns(3)
+                            c1.metric("Depth", "PASS" if depth_achieved else "FAIL")
+                            c2.metric("Torso", f"{round(torso_angle)} degrees")
+                            c3.metric("Safety", "SAFE" if is_safe else "RISK")
                             
-                        if frame_profundo is not None:
-                            deep_cap_area.image(frame_profundo, caption="📸 Punto crítico", use_container_width=True)
+                            st.markdown("---")
+                            for error in errors: 
+                                if "Excellent" in error:
+                                    st.success(error)
+                                else:
+                                    st.error(error)
+                            for solution in solutions: 
+                                st.info(f"💡 {solution}")
                             
-                        estado = "ESPERANDO"
+                        if frame_at_depth is not None and keypoints_at_depth is not None:
+                            try:
+                                # --- [FIX] INVARIANT OVERLAY: Draw based on center of body ---
+                                s_x = int((keypoints_at_depth[5][0] + keypoints_at_depth[6][0]) / 2)
+                                s_y = int((keypoints_at_depth[5][1] + keypoints_at_depth[6][1]) / 2)
+                                h_x = int((keypoints_at_depth[11][0] + keypoints_at_depth[12][0]) / 2)
+                                h_y = int((keypoints_at_depth[11][1] + keypoints_at_depth[12][1]) / 2)
+                                
+                                p_shoulder = (s_x, s_y)
+                                p_hip = (h_x, h_y)
+                                
+                                cv2.line(frame_at_depth, p_shoulder, p_hip, (0, 255, 255), 4) # Yellow back line
+                                cv2.line(frame_at_depth, p_hip, (p_hip[0], p_hip[1] - 100), (0, 0, 255), 2) # Red vertical reference
+                                
+                                cv2.putText(frame_at_depth, f"Torso Angle: {round(torso_angle)}", 
+                                            (p_hip[0] + 20, p_hip[1] - 30), 
+                                            cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 255), 2)
+                            except Exception:
+                                pass 
+                                
+                            depth_capture_area.image(frame_at_depth, caption="Kinematic Overlay at Maximum Depth", channels="BGR", use_container_width=True)
+                            
+                        state = "IDLE"
                 
-                reps_st.metric("REPSET", contador)
-            st_frame.image(res[0].plot(), channels="BGR")
-        cap.release()
+                rep_counter.metric("Completed Reps", rep_count)
+                
+                # Display the frame with the target marker
+                frame_display.image(annotated_frame, channels="BGR")
+                
+            else:
+                status_lights.warning("⚠️ Athlete lost. Ensure full body is visible.")
+                if 'frame_resized' in locals():
+                    frame_display.image(frame_resized, channels="BGR")
 
-        # --- SECCIÓN NLP (EVALUACIÓN DE MODELOS) ---
+        video_capture.release()
+
+        # NLP coaching section
         with coach_area.container():
             st.markdown("---")
-            st.markdown("### 🧪 Laboratorio NLP: Comparativa de Modelos")
+            st.markdown("### NLP Coach Feedback")
             
-            # El selector de modelos
-            modelo_elegido = st.selectbox(
-                "Selecciona el Motor de Lenguaje (LLM):", 
+            model_choice = st.selectbox(
+                "Select Language Model:", 
                 ["llama3.2", "qwen2.5"] 
             )
             
-            if st.button(f"🎙️ Pedir Feedback a {modelo_elegido.upper()}", type="primary", use_container_width=True):
-                with st.spinner(f"{modelo_elegido} está escribiendo su reporte..."):
+            if st.button(f"Request Feedback ({model_choice})", type="primary", use_container_width=True):
+                with st.spinner(f"{model_choice} generating coaching report..."):
                     
-                    prompt_entrenador = f"""
-                    Actúa como un entrenador de Powerlifting de élite. 
-                    El sistema biomecánico acaba de analizar a tu atleta con estos datos:
-                    - Veredicto: Sentadilla {ultimo_veredicto}
-                    - Confianza de la IA: {round(ultima_confianza*100, 1)}%
-                    - Ángulo máximo del torso en el hoyo: {round(ultimo_ang_torso, 1)} grados
-                    - Fallos detectados: {', '.join(fallos_limpios)}
+                    error_text = ', '.join(last_errors) if last_errors else "None. Perfect execution."
                     
-                    Redacta un feedback técnico, directo y muy motivador en un máximo de 2 párrafos cortos. 
-                    Háblale de 'tú' al atleta. Si la sentadilla fue válida, felicítale. Si fue nula, dale un consejo biomecánico.
-                    IMPORTANTE: NUNCA menciones que eres una IA, un modelo de lenguaje o que te han pasado un prompt.
+                    coach_prompt = f"""
+                    Act as an elite Powerlifting coach providing direct technical feedback.
+                    Athlete squat analysis results:
+                    - Verdict: {last_verdict}
+                    - Depth Confidence: {round(last_confidence*100, 1)}%
+                    - Torso angle at depth: {round(last_torso_angle, 1)} degrees
+                    - Form deviations detected: {error_text}
+                    
+                    Provide direct, technical coaching feedback in 2-3 sentences maximum.
+                    Address the athlete directly. If valid, congratulate them. If invalid, provide specific biomechanical corrections.
+                    Never mention you are an AI or language model.
                     """
                     
                     try:
-                        # Pasamos la variable dinámica del modelo
-                        respuesta = ollama.chat(model=modelo_elegido, messages=[
-                            {'role': 'user', 'content': prompt_entrenador}
+                        response = ollama.chat(model=model_choice, messages=[
+                            {'role': 'user', 'content': coach_prompt}
                         ])
-                        st.info(f"**Coach Virtual ({modelo_elegido}):**\n\n {respuesta['message']['content']}")
+                        st.info(f"**Coach Feedback ({model_choice}):**\n\n {response['message']['content']}")
                     except Exception as e:
-                        st.error(f"Error al conectar. ¿Has descargado el modelo con 'ollama pull {modelo_elegido}'?")
+                        st.error(f"Connection error. Ensure Ollama is running with: ollama pull {model_choice}")
 
-# ==========================================
-# --- TAB 2: ARQUITECTO BIOMECÁNICO + NLP ---
-# ==========================================
+# Tab 2: Anthropometric analysis
 with tab2:
-    st.header("📐 Sastre Biomecánico")
-    foto = st.file_uploader("Foto de frente completa", type=['jpg', 'png'])
-    if foto:
-        img = cv2.imdecode(np.frombuffer(foto.read(), np.uint8), 1)
+    st.header("Anthropometric Analysis")
+    photo = st.file_uploader("Upload front-facing photo", type=['jpg', 'png'])
+    if photo:
+        img = cv2.imdecode(np.frombuffer(photo.read(), np.uint8), 1)
         
-        # Ajuste de proporción opcional también para fotos
-        h_f, w_f = img.shape[:2]
-        w_f_new = 800
-        h_f_new = int(h_f * (w_f_new / w_f))
-        img_res = cv2.resize(img, (w_f_new, h_f_new))
+        img_height, img_width = img.shape[:2]
+        img_width_new = 800
+        img_height_new = int(img_height * (img_width_new / img_width))
+        img_resized = cv2.resize(img, (img_width_new, img_height_new))
         
-        res_p = yolo_pose.predict(img_res, conf=0.5, verbose=False)
+        detection_photo = model_yolo.predict(img_resized, conf=0.5, verbose=False)
         
-        if res_p[0].keypoints:
-            tipo, rec, ratio = analizar_proporciones(res_p[0].keypoints.data[0].cpu().numpy())
+        if detection_photo[0].boxes and detection_photo[0].keypoints and len(detection_photo[0].keypoints.data) > 0:
             
-            c1, c2 = st.columns(2)
-            c1.image(res_p[0].plot(), use_container_width=True)
+            # --- [FIX] CENTER ATHLETE IN PHOTO ---
+            keypoints_raw_photo = detection_photo[0].keypoints.data.cpu().numpy()
+            boxes_photo = detection_photo[0].boxes.data.cpu().numpy()
             
-            with c2:
-                st.metric("Ratio Fémur/Torso", round(ratio, 2))
-                st.success(f"**Estructura Base:** {tipo}\n\n**Técnica recomendada:** {rec}")
+            best_idx_photo = np.argmin([abs((b[0]+b[2])/2 - (img_width_new/2)) for b in boxes_photo])
+            athlete_kps_photo = keypoints_raw_photo[best_idx_photo]
+            
+            structure_type, recommendation, femur_ratio = analyze_proportions(athlete_kps_photo)
+            
+            # Draw target marker on photo
+            annotated_photo = detection_photo[0].plot()
+            try:
+                p_nose_x, p_nose_y = int(athlete_kps_photo[0][0]), int(athlete_kps_photo[0][1])
+                cv2.circle(annotated_photo, (p_nose_x, p_nose_y), 8, (0, 255, 0), -1)
+                cv2.circle(annotated_photo, (p_nose_x, p_nose_y), 18, (0, 255, 255), 2)
+            except Exception:
+                pass
+            
+            col1, col2 = st.columns(2)
+            col1.image(annotated_photo, channels="BGR", use_container_width=True)
+            
+            with col2:
+                st.metric("Femur/Torso Ratio", round(femur_ratio, 2))
+                st.success(f"**Anthropometric Type:** {structure_type}\n\n**Recommended Technique:** {recommendation}")
                 
-                # --- INTEGRACIÓN DE OLLAMA ---
                 st.markdown("---")
-                if st.button("🤖 Generar Informe de Anatomía (NLP)", type="primary"):
-                    with st.spinner("El experto biomecánico está redactando el informe..."):
+                if st.button("Generate Analysis (NLP)", type="primary"):
+                    with st.spinner("Analyzing anthropometry..."):
                         
-                        prompt_arquitecto = f"""
-                        Actúa como un analista biomecánico experto en Powerlifting. 
-                        Acabas de medir la estructura ósea de un atleta a través de visión artificial y tienes estos datos:
-                        - Ratio Fémur/Torso: {round(ratio, 2)}
-                        - Tipo de estructura: {tipo}
-                        - Variante de sentadilla recomendada: {rec}
+                        analysis_prompt = f"""
+                        Act as an expert biomechanical analyst specializing in Powerlifting anthropometry.
+                        Athlete measurement data from pose analysis:
+                        - Femur/Torso Ratio: {round(femur_ratio, 2)}
+                        - Structure Classification: {structure_type}
+                        - Recommended Variant: {recommendation}
                         
-                        Escribe un breve informe técnico y directo (máximo 2 párrafos) dirigiéndote al atleta de 'tú'. 
-                        Explícale de forma sencilla qué significa tener esa estructura anatómica, por qué le beneficia la variante recomendada, y dale un pequeño consejo para sacarle partido a su palanca.
-                        NUNCA menciones que eres una IA o un modelo de lenguaje.
+                        Provide brief technical analysis (2-3 sentences) addressing the athlete directly.
+                        Explain what their anthropometry means for squat performance, why the recommended variant suits them, and one specific advantage.
+                        Never mention you are an AI or language model.
                         """
                         
                         try:
-                            respuesta_arq = ollama.chat(model='llama3.2', messages=[
-                                {'role': 'user', 'content': prompt_arquitecto}
+                            response = ollama.chat(model='llama3.2', messages=[
+                                {'role': 'user', 'content': analysis_prompt}
                             ])
-                            st.info(f"**Informe del Analista:**\n\n {respuesta_arq['message']['content']}")
+                            st.info(f"**Analysis Report:**\n\n {response['message']['content']}")
                         except Exception as e:
-                            st.error("Error al conectar con Ollama. Asegúrate de tenerlo abierto.")
+                            st.error("Connection error. Ensure Ollama is running.")
 
-# ==========================================
-# --- TAB 3 y TAB 4 ---
-# ==========================================
+# Tab 3: Competitive benchmarking
 with tab3:
-    st.header("📊 Nivel Competitivo")
-    reps_cal = st.number_input("Reps para 1RM", min_value=1, value=1)
-    one_rm = lift_weight * (1 + reps_cal / 30)
-    st.metric("Tu 1RM Estimado", f"{round(one_rm, 2)} kg")
-    url = f"https://www.openpowerlifting.org/rankings/{int(user_weight)}/{mapa_paises[pais]}/{sexo}/by-squat"
-    st.markdown(f"### [🔗 Ir a OpenPowerlifting Rank]({url})")
+    st.header("Competitive Benchmarking")
+    estimated_reps = st.number_input("Reps performed", min_value=1, value=1)
+    estimated_1rm = lift_weight * (1 + estimated_reps / 30)
+    st.metric("Estimated 1RM", f"{round(estimated_1rm, 2)} kg")
+    ranking_url = f"https://www.openpowerlifting.org/rankings/{int(user_weight)}/{country_mapping[region]}/{gender}/by-squat"
+    st.markdown(f"### [View OpenPowerlifting Rankings]({ranking_url})")
 
+# Tab 4: System diagnostics
 with tab4:
-    st.header("🕹️ Estado del Sistema")
+    st.header("System Status")
     st.progress(100)
-    st.success("✅ Motor Biomecánico Operativo (YOLOv8 + LSTM)")
-    st.success("✅ Módulo NLP Generativo Activo (Ollama Llama 3.2 Local)")
+    st.success("[ONLINE] Biomechanical inference engine operational (YOLOv8 + LSTM)")
+    st.success("[ONLINE] Natural language coaching module active (Ollama with local LLM)")
     
 st.divider()
-st.table([
-    {"Fallo": "Valgo Rodilla", "Causa": "Glúteo medio débil", "Ejercicio": "Banded Squats / Monster Walk"},
-    {"Fallo": "Hip Shift", "Causa": "Asimetría de movilidad", "Ejercicio": "Sentadilla Búlgara / Cossack Squat"},
-    {"Fallo": "Good Morning Squat", "Causa": "Cuádriceps débiles", "Ejercicio": "Sentadilla con Pausa / Frontal"}
-])
+
+with st.expander("View Biomechanical Correction Matrix (Knowledge Base)"):
+    st.table([
+        {"Form Deviation": "Knee Valgus", "Root Cause": "Weak glute medius", "Corrective Exercise": "Banded squats, monster walks"},
+        {"Form Deviation": "Hip Shift", "Root Cause": "Mobility asymmetry", "Corrective Exercise": "Bulgarian squat, Cossack squat"},
+        {"Form Deviation": "Forward Lean", "Root Cause": "Weak quadriceps", "Corrective Exercise": "Pause squats, front squats"}
+    ])
