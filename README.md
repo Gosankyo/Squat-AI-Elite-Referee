@@ -115,10 +115,6 @@ proyecto-final-4/
 4. Push to the branch (`git push origin feature/AmazingFeature`)
 5. Open a Pull Request
 
-## License
-
-This project is licensed under the MIT License. See the `LICENSE` file for more details.
-
 ## Contact
 
 For questions or suggestions, please open an issue in the repository.
