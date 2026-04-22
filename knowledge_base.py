@@ -8,7 +8,7 @@ class BiomechanicsExpertSystem:
     def __init__(self):
         # Expert-defined thresholds for biomechanical validation
         self.rules = {
-            "max_torso_angle": 65.5,  # Max forward lean before shear stress risk
+            "max_torso_angle": 50.0,  # Max forward lean before shear stress risk
             "knee_valgus_threshold": 10.0,  # Max inward knee deviation (degrees)
             "hip_depth_multiplier": 1.1  # Depth achievement coefficient
         }

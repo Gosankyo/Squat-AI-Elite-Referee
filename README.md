@@ -18,6 +18,7 @@ This project implements an advanced real-time biomechanical analysis system for 
 - **Competitive Ranking**: Comparison with powerlifting standards
 - **Voice Interface**: Natural voice command control
 - **Genetic Optimization**: Automatic model parameter improvement
+  Note: The genetic algorithm module is used during model development and is not required for running the application.
 
 ### 📊 Biomechanical Analysis
 - Knee valgus detection
@@ -27,7 +28,7 @@ This project implements an advanced real-time biomechanical analysis system for 
 
 ## System Requirements
 
-- Python 3.8+
+- Python 3.10 (recommended)
 - Compatible webcam
 - Microphone for voice commands
 - GPU recommended for better performance
@@ -64,6 +65,7 @@ python demo_live.py
 - Say "start analysis" to begin
 - The system will analyze your squat form in real-time
 - Receive voice and visual feedback
+- ⚠️ Requires microphone and internet connection for voice commands.
 
 ### Web Application
 ```bash
